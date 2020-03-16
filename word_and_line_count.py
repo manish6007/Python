@@ -33,5 +33,6 @@ class file_stats:
 
 if __name__ == '__main__':
     file_stats = file_stats()
-    file_stats.getLineCount('count.txt')
-    file_stats.getWordCount('count.txt')
+    file_name = input("Please enter file name:")
+    file_stats.getLineCount(file_name)
+    file_stats.getWordCount(file_name)

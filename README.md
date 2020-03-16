@@ -1,6 +1,10 @@
 Python Projects
 ----------------
 
+Word Count:
+-----------
+This program is to count the occurrences of a word in the file using regex.
+
 Tambola:
 -------
 This program is to generate random numbers from 1 to 100 and come out of the program when the all the 100 numbers are covered.

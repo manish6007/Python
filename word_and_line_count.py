@@ -31,8 +31,39 @@ class file_stats:
         for word in freq_list:
             print("{}:{}".format(word, freq[word]))
 
+    def find_word(self, file_name, word_to_search):
+        self.file_name = file_name
+        self.word_to_search = word_to_search.lower()
+        with open(file_name) as myFile:
+            for num, line in enumerate(myFile, 1):
+                if word_to_search in line.lower():
+                    print("Line Number:{} \nContent:{}".format(num, line))
+
+
 if __name__ == '__main__':
+    from tkinter import Tk
+    from tkinter.filedialog import askopenfilename
+
+    Tk().withdraw()  # we don't want a full GUI, so keep the root window from appearing
+    filelocation = askopenfilename()  # open the dialog GUI
     file_stats = file_stats()
-    file_name = input("Please enter file name:")
-    file_stats.getLineCount(file_name)
-    file_stats.getWordCount(file_name)
+    try:
+        choice = int(input(
+            "Please select one of the option: \n1. Line Count\n2. Word Count\n3. Search a word in file\n4. All\n--> "))
+        if choice == 1:
+            file_stats.getLineCount(filelocation)
+        elif choice == 2:
+            file_stats.getWordCount(filelocation)
+        elif choice == 3:
+            word_to_search = input("\nPlease enter a word to search:")
+            file_stats.find_word(filelocation, word_to_search)
+        elif choice == 4:
+            file_stats.getLineCount(filelocation)
+            file_stats.getWordCount(filelocation)
+            word_to_search = input("\nPlease enter a word to search:")
+            file_stats.find_word(filelocation, word_to_search)
+        else:
+            exit()
+    except:
+        print("Not a valid input")
+        exit()

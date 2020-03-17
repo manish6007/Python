@@ -3,7 +3,11 @@ Python Projects
 
 Word/Line Count:
 -----------
-This program is to count the occurrences of a word in the file using regex and the line count uing 2 different methods.
+This program gives the option to choose the file using file browser and provides the option to get.
+- Line Count
+- Word Count
+- Search a particular word in file
+- All of the above
 
 Tambola:
 -------

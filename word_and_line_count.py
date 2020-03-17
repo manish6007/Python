@@ -56,12 +56,12 @@ if __name__ == '__main__':
             file_stats.getWordCount(filelocation)
         elif choice == 3:
             word_to_search = input("\nPlease enter a word to search:")
-            file_stats.find_word(filelocation, word_to_search)
+            file_stats.find_word(filelocation, word_to_search.lower())
         elif choice == 4:
             file_stats.getLineCount(filelocation)
             file_stats.getWordCount(filelocation)
             word_to_search = input("\nPlease enter a word to search:")
-            file_stats.find_word(filelocation, word_to_search)
+            file_stats.find_word(filelocation, word_to_search.lower())
         else:
             exit()
     except:

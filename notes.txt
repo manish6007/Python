@@ -1,0 +1,123 @@
+https://automatetheboringstuff.com/2e/chapter15/
+https://nostarch.com/automatestuff2/
+https://github.com/10akki/PdfProject/tree/master
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+%matplotlib inline
+
+import pandas_datareader
+import datetime
+
+class color:
+   PURPLE = '\033[95m'
+   CYAN = '\033[96m'
+   DARKCYAN = '\033[36m'
+   BLUE = '\033[94m'
+   GREEN = '\033[92m'
+   YELLOW = '\033[93m'
+   RED = '\033[91m'
+   BOLD = '\033[1m'
+   UNDERLINE = '\033[4m'
+   END = '\033[0m'
+   
+  start = datetime.datetime(pd.datetime.now().year-1,pd.datetime.now().month,pd.datetime.now().day)
+end = datetime.datetime(pd.datetime.now().year,pd.datetime.now().month,pd.datetime.now().day)
+
+stock = web.DataReader('TCS','yahoo',start,end)
+
+stock.head()
+
+print (color.GREEN+'***********************************************************************************************************************')
+print (color.GREEN + '\033[1m' + 'Price fluctuation over the last one year from %s to %s'%(start, end))
+print ('***********************************************************************************************************************')
+
+stock['Open'].plot(label='stock',figsize=(16,8),title='Open Price')
+plt.legend()
+plt.show();
+
+stock['Total Traded'] = stock['Open']*stock['Volume']
+
+print (color.GREEN+'***********************************************************************************************************************')
+print (color.GREEN + '\033[1m' + 'Total volume traded over the last one year from %s to %s'%(start, end))
+print ('***********************************************************************************************************************')
+
+stock['Total Traded'].plot(label='stock',figsize=(16,8))
+plt.ylabel('Total Traded')
+plt.legend()
+plt.show();
+
+stock['Total Traded'].idxmax()
+stock['Total Traded'].max()
+
+
+print (color.GREEN+'***********************************************************************************************************************')
+print (color.GREEN + '\033[1m' + 'MA50 and MA200 over the last one year from %s to %s'%(start, end))
+print ('***********************************************************************************************************************')
+
+stock['MA50'] = stock['Open'].rolling(50).mean()
+stock['MA200'] = stock['Open'].rolling(200).mean()
+stock[['Open','MA50','MA200']].plot(label='stock',figsize=(16,8))
+plt.show();
+
+import mpl_finance
+from mpl_finance import candlestick_ohlc
+from matplotlib.dates import DateFormatter, date2num, WeekdayLocator, DayLocator, MONDAY
+
+# Rest the index to get a column of January Dates
+stock_reset = stock.loc['2020-01':'2020-03'].reset_index()
+print (color.GREEN+'***********************************************************************************************************************')
+print (color.GREEN + '\033[1m' + 'Candelistic Chart  over the last 2 months')
+print ('***********************************************************************************************************************')
+
+# Create a new column of numerical "date" values for matplotlib to use
+stock_reset['date_ax'] = stock_reset['Date'].apply(lambda date: date2num(date))
+stock_values = [tuple(vals) for vals in stock_reset[['date_ax', 'Open', 'High', 'Low', 'Close']].values]
+
+mondays = WeekdayLocator(MONDAY)        # major ticks on the mondays
+alldays = DayLocator()              # minor ticks on the days
+weekFormatter = DateFormatter('%b %d')  # e.g., Jan 12
+dayFormatter = DateFormatter('%d')      # e.g., 12
+
+#Plot it
+fig, ax = plt.subplots(figsize=(16,8))
+fig.subplots_adjust(bottom=0.2)
+ax.xaxis.set_major_locator(mondays)
+ax.xaxis.set_minor_locator(alldays)
+ax.xaxis.set_major_formatter(weekFormatter)
+
+candlestick_ohlc(ax, stock_values, width=0.6, colorup='g',colordown='r')
+plt.show();
+
+print (color.GREEN+'***********************************************************************************************************************')
+print (color.GREEN + '\033[1m' + 'Percentage change of the stock  over the last one year from %s to %s \N{grinning face}'%(start, end))
+print ('***********************************************************************************************************************')
+
+#stock['returns'] = (stock['Close'] / stock['Close'].shift(1) ) - 1
+stock['returns'] = stock['Close'].pct_change(1)
+stock['returns'].hist(bins=50,figsize=(16,8))
+plt.show()
+
+print (color.GREEN+'***********************************************************************************************************************')
+print (color.GREEN+'\033[1m' + 'Cumulative Daily returns over the last one year from %s to %s \N{grinning face}'%(start, end))
+print ('***********************************************************************************************************************')
+stock['Cumulative Return'] = (1 + stock['returns']).cumprod()
+stock['Cumulative Return'].plot(label='stock',figsize=(16,8),title='Cumulative Return')
+plt.legend()
+plt.show()
+
+
+read_file = open('dictionary.txt')
+file_content = read_file.read()
+wordList = file_content.split('\n')
+pdfReader = PyPDF2.PdfFileReader(open('encrypted.pdf', 'rb'))
+if pdfReader.isEncrypted:
+    for word in wordList:
+        flag = pdfReader.decrypt(word.lower())
+        if flag == 1:
+            print(pdfReader.numPages)
+            break
+        else:
+            continue

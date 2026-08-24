@@ -94,6 +94,51 @@ def holding_bucket(h):
     return BUCKET_MAP.get(h.get("asset_class"), "other")
 
 
+LIQUID_FD_MONTHS = 12
+
+
+def _months_between(start, end):
+    return (end.year - start.year) * 12 + (end.month - start.month)
+
+
+def _parse_date(value):
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str) and value.strip():
+        try:
+            return date.fromisoformat(value.strip()[:10])
+        except ValueError:
+            return None
+    return None
+
+
+def is_liquid(h, as_of=None, fd_liquid_months=LIQUID_FD_MONTHS):
+    """Is this money reachable in an emergency?
+
+    Savings accounts and anything sitting in the cash bucket (liquid funds, or
+    a holding the user explicitly re-filed as cash) always count. A fixed
+    deposit counts only when it has already matured or matures within
+    `fd_liquid_months`: a 5-year tax-saver FD is not emergency money, a
+    6-month sweep FD is. An FD with no maturity date recorded is treated as
+    locked -- better to under-count the buffer than to claim one that is not
+    reachable.
+    """
+    as_of = as_of or date.today()
+    if h.get("asset_class") == "savings" or holding_bucket(h) == "cash":
+        return True
+    if h.get("asset_class") == "fd":
+        maturity = _parse_date((h.get("meta") or {}).get("maturity_date"))
+        if maturity:
+            return _months_between(as_of, maturity) <= fd_liquid_months
+    return False
+
+
+def liquid_total(holdings, as_of=None, fd_liquid_months=LIQUID_FD_MONTHS):
+    as_of = as_of or date.today()
+    return sum(holding_value(h, as_of) for h in holdings
+               if is_liquid(h, as_of, fd_liquid_months))
+
+
 def aggregate(holdings, as_of=None):
     """Totals by asset class, by owner, by bucket, and overall."""
     as_of = as_of or date.today()

@@ -163,3 +163,46 @@ def test_target_presets_shape():
     assert all(p["targets"] and p["name"] and p["detail"] for p in presets)
     # no age -> no age-based card
     assert all(p["key"] != "age_rule" for p in analytics.target_presets())
+
+
+def test_savings_and_cash_bucket_are_liquid():
+    assert analytics.is_liquid({"asset_class": "savings"})
+    assert analytics.is_liquid({"asset_class": "mutual_fund",
+                                "meta": {"category": "liquid"}})
+    assert analytics.is_liquid({"asset_class": "fd", "meta": {"bucket": "cash"}})
+
+
+def test_short_fd_is_liquid_long_fd_is_not():
+    today = date(2026, 8, 24)
+    short = {"asset_class": "fd", "meta": {"maturity_date": "2027-02-01"}}
+    long = {"asset_class": "fd", "meta": {"maturity_date": "2031-01-01"}}
+    assert analytics.is_liquid(short, today)
+    assert not analytics.is_liquid(long, today)
+
+
+def test_matured_fd_counts_as_liquid():
+    assert analytics.is_liquid(
+        {"asset_class": "fd", "meta": {"maturity_date": "2025-01-01"}},
+        date(2026, 8, 24))
+
+
+def test_fd_without_maturity_is_treated_as_locked():
+    assert not analytics.is_liquid({"asset_class": "fd", "meta": {}})
+    assert not analytics.is_liquid({"asset_class": "fd",
+                                    "meta": {"maturity_date": "garbage"}})
+
+
+def test_equity_is_never_liquid():
+    assert not analytics.is_liquid({"asset_class": "stock"})
+    assert not analytics.is_liquid({"asset_class": "epf"})
+
+
+def test_liquid_total_sums_only_reachable_money():
+    today = date(2026, 8, 24)
+    hs = [{"asset_class": "savings", "manual_value": 300000,
+           "value_date": today},
+          {"asset_class": "fd", "avg_cost": 200000, "rate": 0,
+           "start_date": today, "meta": {"maturity_date": "2027-01-01"}},
+          {"asset_class": "fd", "avg_cost": 500000, "rate": 0,
+           "start_date": today, "meta": {"maturity_date": "2032-01-01"}}]
+    assert analytics.liquid_total(hs, today) == 500000

@@ -138,7 +138,15 @@ def apply_holding_payload(h, payload):
         if f in payload:
             setattr(h, f, parse_date(payload[f]))
     if "meta" in payload and isinstance(payload["meta"], dict):
-        h.meta = json.dumps(payload["meta"])
+        # Merge, don't clobber: setting a bucket must not wipe an MF's
+        # category. An empty value clears that key.
+        merged = h.meta_dict()
+        for k, v in payload["meta"].items():
+            if v in (None, ""):
+                merged.pop(k, None)
+            else:
+                merged[k] = v
+        h.meta = json.dumps(merged)
 
 
 @app.get("/api/holdings")
@@ -228,8 +236,12 @@ async def import_holdings(file: UploadFile):
                 rate=float(r.get("rate") or 0),
                 start_date=parse_date((r.get("start_date") or "").strip()),
                 value_date=date.today(),
-                meta=json.dumps({"category": (r.get("category") or "").strip()}
-                                if (r.get("category") or "").strip() else {}))
+                meta=json.dumps({
+                    k: v for k, v in (
+                        ("category", (r.get("category") or "").strip()),
+                        ("bucket", (r.get("bucket") or "").strip()),
+                        ("maturity_date", (r.get("maturity_date") or "").strip()),
+                    ) if v}))
             if cls in analytics.UNIT_PRICED:
                 h.last_price = float(r.get("last_price") or 0) or h.avg_cost
                 h.price_date = date.today()

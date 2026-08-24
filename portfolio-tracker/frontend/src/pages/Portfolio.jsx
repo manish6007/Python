@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react'
-import { api, inr } from '../api'
+import { api, BUCKET_LABELS, inr } from '../api'
 
 const UNIT_CLASSES = ['mutual_fund', 'stock', 'gold_etf', 'reit', 'sgb', 'nps', 'gold_physical']
 const BALANCE_CLASSES = ['savings', 'epf', 'ppf', 'other']
@@ -9,7 +9,7 @@ const BUCKETS = ['equity', 'debt', 'gold', 'real_estate', 'cash', 'other']
 const emptyForm = {
   asset_class: 'mutual_fund', name: '', identifier: '', units: '', avg_cost: '',
   last_price: '', manual_value: '', rate: '', start_date: '', category: 'equity',
-  bucket: 'other', notes: '',
+  bucket: '', maturity_date: '', notes: '',
 }
 
 export default function Portfolio({ summary, meta, owners, reload }) {
@@ -20,6 +20,7 @@ export default function Portfolio({ summary, meta, owners, reload }) {
   const [amfiHits, setAmfiHits] = useState(null)
   const [editId, setEditId] = useState(null)
   const [editVal, setEditVal] = useState('')
+  const [editMaturity, setEditMaturity] = useState('')
   const fileRef = useRef()
 
   const cls = form.asset_class
@@ -42,7 +43,9 @@ export default function Portfolio({ summary, meta, owners, reload }) {
       notes: form.notes,
       meta: {
         ...(cls === 'mutual_fund' ? { category: form.category } : {}),
-        ...(cls === 'other' ? { bucket: form.bucket } : {}),
+        ...(form.bucket ? { bucket: form.bucket } : {}),
+        ...(cls === 'fd' && form.maturity_date
+          ? { maturity_date: form.maturity_date } : {}),
       },
     }
     try {
@@ -78,6 +81,7 @@ export default function Portfolio({ summary, meta, owners, reload }) {
 
   const startEdit = (h) => {
     setEditId(h.id)
+    setEditMaturity(h.meta?.maturity_date || '')
     setEditVal(String(
       BALANCE_CLASSES.includes(h.asset_class) ? h.manual_value
         : h.asset_class === 'fd' ? h.avg_cost : h.last_price || 0))
@@ -88,6 +92,7 @@ export default function Portfolio({ summary, meta, owners, reload }) {
     const payload = BALANCE_CLASSES.includes(h.asset_class)
       ? { manual_value: v }
       : h.asset_class === 'fd' ? { avg_cost: v } : { last_price: v }
+    if (h.asset_class === 'fd') payload.meta = { maturity_date: editMaturity }
     await api.put('/api/holdings/' + h.id, payload)
     setEditId(null)
     reload()
@@ -107,11 +112,12 @@ export default function Portfolio({ summary, meta, owners, reload }) {
     fileRef.current.value = ''
   }
 
-  const template = 'owner,asset_class,name,identifier,units,avg_cost,manual_value,last_price,rate,start_date,category\n' +
-    'Me,mutual_fund,Parag Parikh Flexi Cap Dir-G,122639,512.33,55.1,0,81.2,0,,equity\n' +
-    'Me,stock,Reliance Industries,RELIANCE,10,2400,0,2950,0,,\n' +
-    'Wife,fd,HDFC FD,XXXX1234,0,500000,0,0,7.1,2025-01-15,\n' +
-    'Me,ppf,SBI PPF,,0,0,450000,0,7.1,,\n'
+  const template = 'owner,asset_class,name,identifier,units,avg_cost,manual_value,last_price,rate,start_date,category,bucket,maturity_date\n' +
+    'Me,mutual_fund,Parag Parikh Flexi Cap Dir-G,122639,512.33,55.1,0,81.2,0,,equity,,\n' +
+    'Me,stock,Reliance Industries,RELIANCE,10,2400,0,2950,0,,,,\n' +
+    'Wife,fd,HDFC sweep FD,XXXX1234,0,500000,0,0,7.1,2025-01-15,,cash,2026-01-15\n' +
+    'Me,fd,SBI 5yr tax saver FD,XXXX9911,0,150000,0,0,7.0,2024-03-01,,,2029-03-01\n' +
+    'Me,ppf,SBI PPF,,0,0,450000,0,7.1,,,,\n'
 
   return (
     <div className="grid">
@@ -174,6 +180,10 @@ export default function Portfolio({ summary, meta, owners, reload }) {
               <label className="field">Start date
                 <input type="date" value={form.start_date} onChange={set('start_date')} />
               </label>
+              <label className="field">Maturity date
+                <input type="date" value={form.maturity_date}
+                  onChange={set('maturity_date')} />
+              </label>
             </>)}
             {!isUnit && !isFd && (<>
               <label className="field">Current balance / value
@@ -182,16 +192,24 @@ export default function Portfolio({ summary, meta, owners, reload }) {
               <label className="field">Rate % p.a. (0 = no accrual)
                 <input type="number" step="any" value={form.rate} onChange={set('rate')} />
               </label>
-              {cls === 'other' && (
-                <label className="field">Counts as
-                  <select value={form.bucket} onChange={set('bucket')}>
-                    {BUCKETS.map((b) => <option key={b}>{b}</option>)}
-                  </select>
-                </label>
-              )}
             </>)}
+            <label className="field">Counts as
+              <select value={form.bucket} onChange={set('bucket')}>
+                <option value="">Auto (by asset class)</option>
+                {BUCKETS.map((b) => (
+                  <option key={b} value={b}>{BUCKET_LABELS[b]}</option>
+                ))}
+              </select>
+            </label>
             <button className="btn" type="submit">Add holding</button>
           </div>
+          <p className="small muted">
+            <b>Counts as</b> overrides which allocation bucket this lands in.
+            Leave it on Auto unless the default is wrong for you — e.g. file a
+            sweep FD under Cash so it counts toward your emergency fund, while
+            a 5-year FD stays in Debt. FDs also count as emergency money
+            automatically once their maturity date is within 12 months.
+          </p>
         </form>
       </div>
 
@@ -227,7 +245,7 @@ export default function Portfolio({ summary, meta, owners, reload }) {
           <div style={{ overflowX: 'auto' }}>
             <table className="data">
               <thead><tr>
-                <th>Owner</th><th>Class</th><th>Name</th>
+                <th>Owner</th><th>Class</th><th>Name</th><th>Counts as</th>
                 <th className="num">Invested</th><th className="num">Current</th>
                 <th className="num">P&L</th><th>Priced</th><th></th>
               </tr></thead>
@@ -237,6 +255,27 @@ export default function Portfolio({ summary, meta, owners, reload }) {
                     <td>{h.owner}</td>
                     <td>{meta.asset_class_labels[h.asset_class]}</td>
                     <td>{h.name}</td>
+                    <td>
+                      <select value={h.meta?.bucket || ''}
+                        style={{ padding: '2px 4px', fontSize: 12 }}
+                        title={h.meta?.bucket
+                          ? 'Overridden - click to change or return to auto'
+                          : 'Automatic from the asset class'}
+                        onChange={async (ev) => {
+                          await api.put('/api/holdings/' + h.id,
+                            { meta: { bucket: ev.target.value } })
+                          reload()
+                        }}>
+                        <option value="">{BUCKET_LABELS[h.bucket]} (auto)</option>
+                        {BUCKETS.map((b) => (
+                          <option key={b} value={b}>{BUCKET_LABELS[b]}</option>
+                        ))}
+                      </select>
+                      {h.asset_class === 'fd' && (
+                        <span className="small muted"> {h.meta?.maturity_date
+                          ? 'mat. ' + h.meta.maturity_date : 'no maturity set'}</span>
+                      )}
+                    </td>
                     <td className="num">{inr(h.invested)}</td>
                     <td className="num">
                       {editId === h.id ? (
@@ -244,6 +283,11 @@ export default function Portfolio({ summary, meta, owners, reload }) {
                           <input autoFocus style={{ width: 110 }} type="number" step="any"
                             value={editVal} onChange={(e) => setEditVal(e.target.value)}
                             onKeyDown={(e) => e.key === 'Enter' && saveEdit(h)} />
+                          {h.asset_class === 'fd' && (
+                            <input type="date" title="Maturity date"
+                              style={{ width: 140 }} value={editMaturity}
+                              onChange={(e) => setEditMaturity(e.target.value)} />
+                          )}
                           <button className="btn" type="button" onClick={() => saveEdit(h)}>✓</button>
                         </span>
                       ) : inr(h.current_value)}
@@ -268,7 +312,9 @@ export default function Portfolio({ summary, meta, owners, reload }) {
         <h2>Bulk import (CSV)</h2>
         <p className="small muted">
           Columns: owner, asset_class, name, identifier, units, avg_cost,
-          manual_value, last_price, rate, start_date (YYYY-MM-DD), category.
+          manual_value, last_price, rate, start_date, category, bucket,
+          maturity_date. Dates are YYYY-MM-DD; bucket overrides the
+          allocation bucket (blank = automatic).
         </p>
         <div className="row">
           <a className="btn secondary" style={{ textDecoration: 'none' }}

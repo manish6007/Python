@@ -58,7 +58,8 @@ export default function Dashboard({ summary, meta, reload }) {
       <div className="grid cols-2">
         <div className="card">
           <h2>Allocation vs target</h2>
-          <AllocationChart drift={s.drift} bucketLabels={BUCKET_LABELS} />
+          <AllocationChart drift={s.drift} bucketLabels={BUCKET_LABELS}
+            holdings={s.holdings} />
         </div>
         <div className="card">
           <h2>Suggestions</h2>

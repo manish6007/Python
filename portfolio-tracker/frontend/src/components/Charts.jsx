@@ -66,10 +66,62 @@ export function OwnerBar({ byOwner }) {
   )
 }
 
-export function AllocationChart({ drift, bucketLabels }) {
+// Tooltip that answers "what is actually inside this bucket?"
+function BucketTooltip({ active, payload, contents }) {
+  if (!active || !payload || !payload.length) return null
+  const row = payload[0].payload
+  const items = (contents && contents[row.bucket]) || []
+  const total = items.reduce((a, h) => a + h.current_value, 0)
+  return (
+    <div style={{
+      background: 'var(--surface-1)', border: '1px solid var(--border)',
+      borderRadius: 8, padding: '8px 10px', fontSize: 12,
+      color: 'var(--text-primary)', maxWidth: 300,
+    }}>
+      <div style={{ fontWeight: 600, marginBottom: 4 }}>
+        {row.name} — {inr(total)}
+      </div>
+      <div style={{ color: 'var(--text-secondary)', marginBottom: 6 }}>
+        actual {row.Actual}% · target {row.Target}%
+      </div>
+      {items.length ? (
+        <>
+          {items.slice(0, 6).map((h) => (
+            <div key={h.id} style={{
+              display: 'flex', justifyContent: 'space-between', gap: 12,
+              color: 'var(--text-secondary)',
+            }}>
+              <span>{h.name.length > 30 ? h.name.slice(0, 29) + '…' : h.name}</span>
+              <span style={{ fontVariantNumeric: 'tabular-nums' }}>
+                {inrShort(h.current_value)}
+              </span>
+            </div>
+          ))}
+          {items.length > 6 && (
+            <div style={{ color: 'var(--muted)', marginTop: 4 }}>
+              +{items.length - 6} more
+            </div>
+          )}
+        </>
+      ) : (
+        <div style={{ color: 'var(--muted)' }}>Nothing in this bucket yet.</div>
+      )}
+    </div>
+  )
+}
+
+export function AllocationChart({ drift, bucketLabels, holdings = [] }) {
+  const contents = {}
+  for (const h of holdings) {
+    (contents[h.bucket] = contents[h.bucket] || []).push(h)
+  }
+  for (const k of Object.keys(contents)) {
+    contents[k].sort((a, b) => b.current_value - a.current_value)
+  }
   const data = drift
     .filter((d) => d.actual_pct > 0 || d.target_pct > 0)
     .map((d) => ({
+      bucket: d.bucket,
       name: bucketLabels[d.bucket] || d.bucket,
       Actual: +d.actual_pct.toFixed(1),
       Target: +d.target_pct.toFixed(1),
@@ -81,7 +133,7 @@ export function AllocationChart({ drift, bucketLabels }) {
         <CartesianGrid stroke="var(--grid)" vertical={false} />
         <XAxis dataKey="name" tick={axisTick} axisLine={{ stroke: 'var(--baseline)' }} tickLine={false} />
         <YAxis tick={axisTick} unit="%" axisLine={false} tickLine={false} width={44} />
-        <Tooltip contentStyle={tooltipStyle} formatter={(v) => v + '%'}
+        <Tooltip content={<BucketTooltip contents={contents} />}
           cursor={{ fill: 'var(--grid)', opacity: 0.4 }} />
         <Legend wrapperStyle={{ fontSize: 12 }} />
         <Bar dataKey="Actual" fill="var(--series-1)" radius={[4, 4, 0, 0]} maxBarSize={40} />

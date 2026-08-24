@@ -96,9 +96,7 @@ def build_suggestion_context(session, holdings, loans, cashflow):
     agg = analytics.aggregate(holdings)
     targets = get_targets(session)
     drift = analytics.allocation_drift(agg["by_bucket"], targets)
-    liquid = sum(analytics.holding_value(h) for h in holdings
-                 if h["asset_class"] == "savings"
-                 or analytics.holding_bucket(h) == "cash")
+    liquid = analytics.liquid_total(holdings)
     idle_savings = sum(analytics.holding_value(h) for h in holdings
                        if h["asset_class"] == "savings")
     ctx = {

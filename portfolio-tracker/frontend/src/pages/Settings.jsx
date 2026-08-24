@@ -101,7 +101,28 @@ export default function Settings({ owners, reload }) {
         <h2>Demo data</h2>
         <p className="muted small">Loads a realistic sample household (holdings
           named "DEMO …") so you can explore every screen before entering real data.</p>
-        <button className="btn secondary" onClick={loadDemo}>Load demo data</button>
+        <div className="row">
+          <button className="btn secondary" onClick={loadDemo}>Load demo data</button>
+          <button className="btn secondary" onClick={async () => {
+            const r = await api.del('/api/demo-data')
+            setMsg('Removed ' + r.removed + ' demo records. Your own data was untouched.')
+            reload()
+          }}>Clear demo data</button>
+        </div>
+      </div>
+
+      <div className="card">
+        <h2>Danger zone</h2>
+        <p className="muted small">Erases every holding, loan, entry, snapshot
+          and member — a completely fresh start. Settings/targets are kept.
+          (Equivalent to deleting backend/portfolio.db.)</p>
+        <button className="btn danger" onClick={async () => {
+          if (!window.confirm('Erase ALL data? This cannot be undone.')) return
+          if (window.prompt('Type ERASE to confirm') !== 'ERASE') return
+          await api.post('/api/reset', { confirm: 'ERASE' })
+          setMsg('All data erased.')
+          reload()
+        }}>Erase ALL data</button>
       </div>
     </div>
   )

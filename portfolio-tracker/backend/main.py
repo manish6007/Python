@@ -618,6 +618,39 @@ def load_demo():
     return {"ok": True}
 
 
+@app.delete("/api/demo-data")
+def clear_demo():
+    """Remove everything the demo seeder created (names/notes marked DEMO)."""
+    s = db()
+    removed = 0
+    for model in (Holding, Loan, RecurringOutflow):
+        for row in s.query(model).filter(model.name.like("DEMO %")):
+            s.delete(row)
+            removed += 1
+    for model in (IncomeEntry, ExpenseEntry):
+        for row in s.query(model).filter(model.notes == "DEMO"):
+            s.delete(row)
+            removed += 1
+    s.commit()
+    s.close()
+    return {"removed": removed}
+
+
+@app.post("/api/reset")
+def reset_all(payload: dict = Body(...)):
+    """Wipe ALL data. Requires {"confirm": "ERASE"} to guard against slips."""
+    if payload.get("confirm") != "ERASE":
+        raise HTTPException(400, "pass {\"confirm\": \"ERASE\"} to wipe all data")
+    s = db()
+    for model in (Transaction, Holding, Loan, RecurringOutflow, IncomeEntry,
+                  ExpenseEntry, Snapshot, Owner):
+        s.query(model).delete()
+    s.commit()
+    service.ensure_default_owner(s)
+    s.close()
+    return {"ok": True}
+
+
 # Serve the built React app if present (production single-process mode).
 DIST = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                     "frontend", "dist")

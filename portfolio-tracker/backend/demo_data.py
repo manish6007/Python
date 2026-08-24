@@ -82,15 +82,15 @@ def seed(s):
     for m in range(3):
         d = today - timedelta(days=30 * m + 1)
         s.add(IncomeEntry(owner_id=me.id, date=d, category="Salary",
-                          amount=185000))
+                          amount=185000, notes="DEMO"))
         s.add(IncomeEntry(owner_id=wife.id, date=d, category="Salary",
-                          amount=95000))
+                          amount=95000, notes="DEMO"))
         s.add(ExpenseEntry(owner_id=me.id, date=d, category="Household",
-                           amount=55000, fixed=1))
+                           amount=55000, fixed=1, notes="DEMO"))
         s.add(ExpenseEntry(owner_id=me.id, date=d, category="School fees",
-                           amount=18000, fixed=1))
+                           amount=18000, fixed=1, notes="DEMO"))
         s.add(ExpenseEntry(owner_id=wife.id, date=d, category="Discretionary",
-                           amount=22000, fixed=0))
+                           amount=22000, fixed=0, notes="DEMO"))
     s.commit()
 
     set_setting(s, "emergency_fund_target", "600000")

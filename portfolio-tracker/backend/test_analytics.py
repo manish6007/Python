@@ -127,3 +127,39 @@ def test_cashflow_zero_months_does_not_divide_by_zero():
     cf = analytics.monthly_cashflow(0, 0, 3, [], income_months=0,
                                     expense_months=0)
     assert cf["income_m"] == 0 and cf["expense_m"] == 0
+
+
+def test_presets_always_sum_to_100():
+    for age in range(18, 96):
+        t = analytics.suggest_targets(age=age)
+        assert abs(sum(t.values()) - 100.0) < 0.05, age
+    for profile in analytics.RISK_PROFILES:
+        t = analytics.suggest_targets(profile=profile)
+        assert abs(sum(t.values()) - 100.0) < 0.05, profile
+
+
+def test_equity_for_age_rule_and_clamps():
+    assert analytics.equity_for_age(40) == 60.0     # 100 - age
+    assert analytics.equity_for_age(10) == 80.0     # capped
+    assert analytics.equity_for_age(95) == 20.0     # floored
+
+
+def test_equity_falls_as_age_rises():
+    ages = [25, 40, 55, 70]
+    eq = [analytics.suggest_targets(age=a)["equity"] for a in ages]
+    assert eq == sorted(eq, reverse=True)
+
+
+def test_very_high_equity_shrinks_sleeves_not_the_total():
+    t = analytics._targets_from_equity(95.0)
+    assert abs(sum(t.values()) - 100.0) < 0.05
+    assert t["debt"] == 0.0 and t["gold"] < analytics.GOLD_PCT
+
+
+def test_target_presets_shape():
+    presets = analytics.target_presets(age=35)
+    assert presets[0]["key"] == "age_rule" and presets[0]["recommended"]
+    assert {p["key"] for p in presets} >= set(analytics.RISK_PROFILES)
+    assert all(p["targets"] and p["name"] and p["detail"] for p in presets)
+    # no age -> no age-based card
+    assert all(p["key"] != "age_rule" for p in analytics.target_presets())

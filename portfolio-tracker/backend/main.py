@@ -69,6 +69,7 @@ def summary():
         "by_bucket": {k: round(v, 2) for k, v in agg["by_bucket"].items()},
         "drift": data["drift"],
         "targets": data["targets"],
+        "targets_customized": bool(get_setting(s, "targets", "")),
         "cashflow": data["cashflow"],
         "suggestions": data["suggestions"],
         "holdings": holdings_out,
@@ -568,13 +569,31 @@ def take_snapshot():
 
 # ---------------- settings ----------------
 SETTING_KEYS = ("emergency_fund_target", "savings_float", "tax_80c_used",
-                "tax_80ccd1b_used")
+                "tax_80ccd1b_used", "age")
+
+
+@app.get("/api/targets/presets")
+def targets_presets(age: int = None):
+    """Suggested target allocations. Age-based card appears when age given."""
+    s = db()
+    if age is None:
+        raw = get_setting(s, "age", "")
+        if raw:
+            try:
+                age = int(float(raw))
+            except ValueError:
+                age = None
+    s.close()
+    if age is not None and not (10 <= age <= 100):
+        raise HTTPException(400, "age must be between 10 and 100")
+    return {"age": age, "presets": analytics.target_presets(age)}
 
 
 @app.get("/api/settings")
 def get_settings():
     s = db()
-    out = {"targets": get_targets(s)}
+    out = {"targets": get_targets(s),
+           "targets_customized": bool(get_setting(s, "targets", ""))}
     for k in SETTING_KEYS:
         out[k] = get_setting(s, k, "")
     s.close()

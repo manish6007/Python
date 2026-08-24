@@ -338,3 +338,102 @@ def prepay_vs_invest(principal, annual_rate_pct, emi, lumpsum,
             "invest_future_value": fv_invest,
             "invest_gain": fv_invest - lumpsum,
             "horizon_months": base_months}
+
+
+# ---------------------------------------------------------------------------
+# Target-allocation presets
+#
+# These follow conventions commonly used by Indian fee-only planners and SEBI
+# RIA material. They are starting points for a conversation, not advice, and
+# every number is meant to be edited by the user:
+#   * Equity via the classic "100 minus age" rule, floored at 20% and capped
+#     at 80% so neither extreme of age lands somewhere silly.
+#   * Gold 10% -- the midpoint of the 5-15% diversifier range most planners
+#     and the World Gold Council quote for Indian portfolios.
+#   * Cash 5% -- a working float; the real emergency fund is sized in months
+#     of expenses, tracked separately in Settings.
+#   * Real estate 5% -- REITs/InvITs only. A home you live in is not an
+#     investment allocation and is deliberately excluded.
+#   * Debt takes the remainder: EPF, PPF, FDs, debt funds, NPS-G.
+# ---------------------------------------------------------------------------
+
+GOLD_PCT = 10.0
+CASH_PCT = 5.0
+REAL_ESTATE_PCT = 5.0
+EQUITY_FLOOR, EQUITY_CAP = 20.0, 80.0
+
+RISK_PROFILES = {
+    "conservative": (30.0, "Capital protection first; short horizons or "
+                           "near/in retirement."),
+    "balanced": (50.0, "Middle path \u2014 growth with a large stability cushion."),
+    "growth": (70.0, "Long horizon and the stomach for deep drawdowns."),
+}
+
+
+def _targets_from_equity(equity_pct):
+    """Fill the remaining buckets around a chosen equity weight."""
+    equity = min(max(float(equity_pct), 0.0), 100.0)
+    fixed = GOLD_PCT + CASH_PCT + REAL_ESTATE_PCT
+    debt = max(100.0 - equity - fixed, 0.0)
+    # If equity is so high the fixed sleeves cannot all fit, shrink them
+    # proportionally rather than letting the total drift off 100.
+    if equity + fixed > 100.0:
+        room = max(100.0 - equity, 0.0)
+        scale = room / fixed if fixed else 0.0
+        out = {"equity": round(equity, 1), "debt": 0.0,
+               "gold": round(GOLD_PCT * scale, 1),
+               "real_estate": round(REAL_ESTATE_PCT * scale, 1),
+               "cash": round(CASH_PCT * scale, 1), "other": 0.0}
+    else:
+        out = {"equity": round(equity, 1), "debt": round(debt, 1),
+               "gold": GOLD_PCT, "real_estate": REAL_ESTATE_PCT,
+               "cash": CASH_PCT, "other": 0.0}
+    return _normalise_to_100(out)
+
+
+def _normalise_to_100(targets):
+    """Push any rounding residual into the largest bucket so the total is
+    exactly 100 -- the UI refuses to save anything else."""
+    residual = round(100.0 - sum(targets.values()), 1)
+    if residual:
+        biggest = max(targets, key=lambda k: targets[k])
+        targets[biggest] = round(targets[biggest] + residual, 1)
+    return targets
+
+
+def equity_for_age(age):
+    """The '100 minus age' rule, clamped to a sane band."""
+    return min(max(100.0 - float(age), EQUITY_FLOOR), EQUITY_CAP)
+
+
+def suggest_targets(age=None, profile=None):
+    """Targets for one preset: age rule when `age` given, else a risk profile."""
+    if age is not None:
+        return _targets_from_equity(equity_for_age(age))
+    equity, _ = RISK_PROFILES.get(profile or "balanced",
+                                  RISK_PROFILES["balanced"])
+    return _targets_from_equity(equity)
+
+
+def target_presets(age=None):
+    """All presets the UI offers, age-based one first when an age is known."""
+    out = []
+    if age is not None:
+        eq = equity_for_age(age)
+        out.append({
+            "key": "age_rule",
+            "name": "Age-based (100 \u2212 age)",
+            "detail": "At %d that puts %.0f%% in equity \u2014 the rule Indian "
+                      "planners most often start from." % (int(age), eq),
+            "targets": suggest_targets(age=age),
+            "recommended": True,
+        })
+    for key, (equity, detail) in RISK_PROFILES.items():
+        out.append({
+            "key": key,
+            "name": key.capitalize(),
+            "detail": detail,
+            "targets": suggest_targets(profile=key),
+            "recommended": False,
+        })
+    return out

@@ -8,6 +8,14 @@ export default function Dashboard({ summary, meta, reload }) {
 
   return (
     <div className="grid">
+      {!s.targets_customized && (
+        <div className="notice">
+          <b>Set your target allocation.</b> The allocation chart and
+          suggestions below are comparing your portfolio against generic
+          placeholder numbers, not a plan you chose. Open <b>Settings</b> to
+          apply an age-based or risk-profile starting point in one click.
+        </div>
+      )}
       {empty && (
         <div className="notice">
           No holdings yet — add them in <b>Portfolio</b>, or load sample data

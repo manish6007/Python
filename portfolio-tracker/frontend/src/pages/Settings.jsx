@@ -1,20 +1,79 @@
 import { useEffect, useState } from 'react'
 import { api, BUCKET_LABELS } from '../api'
 
+// Fixed colour per bucket - colour follows the bucket, never its rank.
+const BUCKET_COLORS = {
+  equity: 'var(--series-1)',
+  debt: 'var(--series-3)',
+  gold: 'var(--series-4)',
+  real_estate: 'var(--series-2)',
+  cash: 'var(--series-5)',
+  other: 'var(--muted)',
+}
+const BUCKET_ORDER = ['equity', 'debt', 'gold', 'real_estate', 'cash', 'other']
+const SHORT = {
+  equity: 'Eq', debt: 'Debt', gold: 'Gold', real_estate: 'RE',
+  cash: 'Cash', other: 'Other',
+}
+
+const allocText = (t) => BUCKET_ORDER
+  .filter((b) => (t[b] || 0) > 0)
+  .map((b) => `${SHORT[b]} ${t[b]}%`)
+  .join(' \u00b7 ')
+
+function AllocBar({ targets }) {
+  const parts = BUCKET_ORDER.filter((b) => (targets[b] || 0) > 0)
+  return (
+    <div style={{ display: 'flex', gap: 2, height: 8, margin: '6px 0 8px' }}>
+      {parts.map((b) => (
+        <div key={b} title={`${BUCKET_LABELS[b]} ${targets[b]}%`}
+          style={{
+            width: `${targets[b]}%`, background: BUCKET_COLORS[b],
+            borderRadius: 3,
+          }} />
+      ))}
+    </div>
+  )
+}
+
 export default function Settings({ owners, reload }) {
   const [settings, setSettings] = useState(null)
   const [newOwner, setNewOwner] = useState('')
   const [msg, setMsg] = useState('')
+  const [presets, setPresets] = useState([])
+  const [age, setAge] = useState('')
 
-  useEffect(() => { api.get('/api/settings').then(setSettings) }, [])
+  useEffect(() => {
+    api.get('/api/settings').then((s) => { setSettings(s); setAge(s.age || '') })
+  }, [])
+
+  useEffect(() => {
+    const valid = age !== '' && +age >= 10 && +age <= 100
+    api.get('/api/targets/presets' + (valid ? '?age=' + +age : ''))
+      .then((d) => setPresets(d.presets))
+      .catch(() => setPresets([]))
+  }, [age])
+
   if (!settings) return <p className="muted">Loading…</p>
 
   const targets = settings.targets
   const targetSum = Object.values(targets).reduce((a, b) => a + (+b || 0), 0)
+  const offTotal = Math.abs(targetSum - 100) > 0.5
 
   const save = async () => {
-    await api.put('/api/settings', settings)
+    await api.put('/api/settings', { ...settings, age })
+    setSettings({ ...settings, targets_customized: true })
     setMsg('Saved.')
+    reload()
+  }
+
+  const applyPreset = async (preset) => {
+    const payload = { targets: preset.targets }
+    if (age !== '') payload.age = age
+    await api.put('/api/settings', payload)
+    setSettings({ ...settings, targets: preset.targets, targets_customized: true })
+    setMsg('Applied the "' + preset.name + '" allocation. Tweak below and save '
+           + 'if you want something different.')
     reload()
   }
 
@@ -59,7 +118,43 @@ export default function Settings({ owners, reload }) {
       </div>
 
       <div className="card">
-        <h2>Target asset allocation (%)</h2>
+        <h2>Target asset allocation</h2>
+        {!settings.targets_customized && (
+          <div className="notice">
+            You haven’t chosen targets yet, so the dashboard is comparing
+            your portfolio against generic placeholder numbers. Pick a starting
+            point below — it drives every rebalancing suggestion.
+          </div>
+        )}
+
+        <p className="small muted" style={{ marginTop: 0 }}>
+          Starting points commonly used by Indian fee-only planners. Educational
+          conventions, not advice — edit anything below before saving.
+        </p>
+
+        <div className="row" style={{ marginBottom: 12 }}>
+          <label className="field">Your age (unlocks the age-based suggestion)
+            <input type="number" min="10" max="100" style={{ width: 130 }}
+              value={age} placeholder="e.g. 38"
+              onChange={(e) => setAge(e.target.value)} />
+          </label>
+        </div>
+
+        <div className="grid cols-4">
+          {presets.map((p) => (
+            <div className="card" key={p.key}
+              style={p.recommended ? { borderColor: 'var(--accent)' } : {}}>
+              <b>{p.name}{p.recommended ? ' ★' : ''}</b>
+              <p className="small muted" style={{ minHeight: 48 }}>{p.detail}</p>
+              <AllocBar targets={p.targets} />
+              <p className="small muted">{allocText(p.targets)}</p>
+              <button className="btn secondary" style={{ width: '100%' }}
+                onClick={() => applyPreset(p)}>Apply</button>
+            </div>
+          ))}
+        </div>
+
+        <h2 style={{ marginTop: 18 }}>Fine-tune (%)</h2>
         <div className="row">
           {Object.keys(BUCKET_LABELS).map((b) => (
             <label className="field" key={b}>{BUCKET_LABELS[b]}
@@ -72,10 +167,16 @@ export default function Settings({ owners, reload }) {
             </label>
           ))}
         </div>
-        <p className={'small ' + (Math.abs(targetSum - 100) > 0.5 ? '' : 'muted')}
-          style={Math.abs(targetSum - 100) > 0.5 ? { color: 'var(--critical)' } : {}}>
-          Total: {targetSum.toFixed(0)}% {Math.abs(targetSum - 100) > 0.5 && '— should add up to 100%'}
-        </p>
+        <div className="row" style={{ alignItems: 'center' }}>
+          <button className="btn" onClick={save} disabled={offTotal}>
+            Save targets
+          </button>
+          <span className={'small ' + (offTotal ? '' : 'muted')}
+            style={offTotal ? { color: 'var(--critical)' } : {}}>
+            Total: {targetSum.toFixed(0)}%
+            {offTotal && ' — must add up to 100% before saving'}
+          </span>
+        </div>
       </div>
 
       <div className="card">

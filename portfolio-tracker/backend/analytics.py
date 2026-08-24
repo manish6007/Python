@@ -164,16 +164,21 @@ def xirr(cashflows, guess=0.1):
     return (lo + hi) / 2
 
 
-def monthly_cashflow(income_total, expense_total, months, recurring):
+def monthly_cashflow(income_total, expense_total, months, recurring,
+                     income_months=None, expense_months=None):
     """Average monthly picture and the investible surplus.
 
-    income_total/expense_total are sums over `months` months of ad-hoc
-    entries; recurring is a list of dicts with amount_monthly, kind,
-    counts_as_investment.
+    income_total/expense_total are sums of ad-hoc entries. Each is divided
+    by the number of calendar months that actually carry entries
+    (income_months/expense_months), NOT by the length of the lookback
+    window -- otherwise one month of expenses logged against a 3-month
+    window reads as a third of the real spend. `months` is the fallback
+    when a caller does not count them. recurring is a list of dicts with
+    amount_monthly, kind, counts_as_investment.
     """
     months = max(months, 1)
-    income_m = income_total / months
-    expense_m = expense_total / months
+    income_m = income_total / max(income_months or months, 1)
+    expense_m = expense_total / max(expense_months or months, 1)
     emi_m = sum(r["amount_monthly"] for r in recurring if r.get("kind") == "emi")
     committed_invest_m = sum(r["amount_monthly"] for r in recurring
                              if r.get("counts_as_investment"))
@@ -182,6 +187,8 @@ def monthly_cashflow(income_total, expense_total, months, recurring):
                             and not r.get("counts_as_investment"))
     surplus = income_m - expense_m - emi_m - other_committed_m - committed_invest_m
     return {"income_m": income_m, "expense_m": expense_m, "emi_m": emi_m,
+            "income_months": max(income_months or months, 1),
+            "expense_months": max(expense_months or months, 1),
             "committed_invest_m": committed_invest_m,
             "other_committed_m": other_committed_m,
             "surplus_m": surplus,

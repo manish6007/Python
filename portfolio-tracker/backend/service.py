@@ -1,5 +1,5 @@
 """Service layer: ORM <-> dict conversion and the computation pipeline."""
-from datetime import date, timedelta
+from datetime import date
 
 import analytics
 from db import (ExpenseEntry, Holding, IncomeEntry, Loan, Owner,
@@ -59,13 +59,30 @@ def load_all(session):
     return holdings, loans, recurring
 
 
+def _window_start(months):
+    """First day of the calendar month `months - 1` back from this one."""
+    today = date.today()
+    y, m = today.year, today.month - (months - 1)
+    while m <= 0:
+        m += 12
+        y -= 1
+    return date(y, m, 1)
+
+
+def _month_span(rows):
+    """How many distinct calendar months actually carry entries."""
+    return len({(r.date.year, r.date.month) for r in rows})
+
+
 def cashflow_summary(session, recurring, months=3):
-    since = date.today() - timedelta(days=months * 30)
-    income = sum(e.amount for e in session.query(IncomeEntry)
-                 .filter(IncomeEntry.date >= since))
-    expense = sum(e.amount for e in session.query(ExpenseEntry)
-                  .filter(ExpenseEntry.date >= since))
-    return analytics.monthly_cashflow(income, expense, months, recurring)
+    since = _window_start(months)
+    inc_rows = session.query(IncomeEntry).filter(IncomeEntry.date >= since).all()
+    exp_rows = session.query(ExpenseEntry).filter(ExpenseEntry.date >= since).all()
+    return analytics.monthly_cashflow(
+        sum(e.amount for e in inc_rows), sum(e.amount for e in exp_rows),
+        months, recurring,
+        income_months=_month_span(inc_rows),
+        expense_months=_month_span(exp_rows))
 
 
 def float_setting(session, key, default=0.0):

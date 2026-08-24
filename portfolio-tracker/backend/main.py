@@ -440,6 +440,22 @@ def add_recurring(payload: dict = Body(...)):
     return {"ok": True}
 
 
+@app.put("/api/recurring/{rid}")
+def update_recurring(rid: int, payload: dict = Body(...)):
+    s = db()
+    r = s.get(RecurringOutflow, rid)
+    if not r:
+        raise HTTPException(404, "not found")
+    for f in ("name", "kind", "amount_monthly"):
+        if f in payload and payload[f] is not None:
+            setattr(r, f, payload[f])
+    if "counts_as_investment" in payload:
+        r.counts_as_investment = 1 if payload["counts_as_investment"] else 0
+    s.commit()
+    s.close()
+    return {"ok": True}
+
+
 @app.delete("/api/recurring/{rid}")
 def delete_recurring(rid: int):
     s = db()

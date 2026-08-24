@@ -3,6 +3,11 @@ import { api, inr } from '../api'
 
 const today = () => new Date().toISOString().slice(0, 10)
 
+const basis = (n) =>
+  !n ? 'no entries yet'
+    : n === 1 ? 'based on 1 month of entries'
+      : `average of ${n} months of entries`
+
 function EntryForm({ kind, owners, onDone }) {
   const isIncome = kind === 'income'
   const [f, setF] = useState({
@@ -80,7 +85,8 @@ export default function Cashflow({ summary, owners, reload }) {
   const [income, setIncome] = useState([])
   const [expenses, setExpenses] = useState([])
   const [rec, setRec] = useState([])
-  const [rf, setRf] = useState({ name: '', kind: 'sip', amount_monthly: '' })
+  const [rf, setRf] = useState({ name: '', kind: 'sip',
+    amount_monthly: '', counts_as_investment: true })
 
   const loadLists = async () => {
     const [i, e, r] = await Promise.all([
@@ -96,25 +102,49 @@ export default function Cashflow({ summary, owners, reload }) {
     e.preventDefault()
     await api.post('/api/recurring', {
       name: rf.name, kind: rf.kind, amount_monthly: +rf.amount_monthly,
-      counts_as_investment: rf.kind === 'sip',
+      counts_as_investment: rf.counts_as_investment,
     })
-    setRf({ name: '', kind: 'sip', amount_monthly: '' })
+    setRf({ name: '', kind: 'sip', amount_monthly: '', counts_as_investment: true })
     refresh()
   }
 
   return (
     <div className="grid">
       <div className="grid cols-4">
-        {[['Income / month (3-mo avg)', cf.income_m],
-          ['Expenses / month', cf.expense_m],
-          ['EMIs + committed', cf.emi_m + cf.other_committed_m + cf.committed_invest_m],
-          ['Investible surplus', cf.surplus_m]].map(([l, v]) => (
-            <div className="card stat" key={l}>
-              <div className="label">{l}</div>
-              <div className={'value ' + (l.includes('surplus') && v < 0 ? 'neg' : '')}>{inr(v)}</div>
-            </div>
-          ))}
+        <div className="card stat">
+          <div className="label">Income / month</div>
+          <div className="value">{inr(cf.income_m)}</div>
+          <div className="sub">{basis(cf.income_months)}</div>
+        </div>
+        <div className="card stat">
+          <div className="label">Expenses / month</div>
+          <div className="value">{inr(cf.expense_m)}</div>
+          <div className="sub">{basis(cf.expense_months)}</div>
+        </div>
+        <div className="card stat">
+          <div className="label">EMIs + committed</div>
+          <div className="value">
+            {inr(cf.emi_m + cf.other_committed_m + cf.committed_invest_m)}
+          </div>
+          <div className="sub">
+            EMI {inr(cf.emi_m)} · investing {inr(cf.committed_invest_m)} · other {inr(cf.other_committed_m)}
+          </div>
+        </div>
+        <div className="card stat">
+          <div className="label">Investible surplus</div>
+          <div className={'value ' + (cf.surplus_m < 0 ? 'neg' : '')}>{inr(cf.surplus_m)}</div>
+          <div className="sub">savings rate {(cf.savings_rate_pct || 0).toFixed(0)}%</div>
+        </div>
       </div>
+
+      {cf.expense_months > 0 && cf.income_months > cf.expense_months && (
+        <div className="notice">
+          Expenses are logged for {cf.expense_months} month
+          {cf.expense_months > 1 ? 's' : ''} but income for {cf.income_months} —
+          each is averaged over its own months, so the figures above are per-month
+          either way. Log the missing months' expenses for a truer surplus.
+        </div>
+      )}
 
       <div className="card">
         <h2>Committed monthly outflows (EMIs, SIPs, premiums)</h2>
@@ -122,8 +152,13 @@ export default function Cashflow({ summary, owners, reload }) {
           <label className="field">Name
             <input required value={rf.name} onChange={(e) => setRf({ ...rf, name: e.target.value })} /></label>
           <label className="field">Kind
-            <select value={rf.kind} onChange={(e) => setRf({ ...rf, kind: e.target.value })}>
-              <option value="sip">SIP (counts as investment)</option>
+            <select value={rf.kind} onChange={(e) => setRf({
+              ...rf, kind: e.target.value,
+              counts_as_investment: ['sip', 'pf', 'nps'].includes(e.target.value),
+            })}>
+              <option value="sip">SIP</option>
+              <option value="pf">PF / EPF contribution</option>
+              <option value="nps">NPS contribution</option>
               <option value="emi">EMI</option>
               <option value="premium">Insurance premium</option>
               <option value="other">Other</option>
@@ -131,14 +166,36 @@ export default function Cashflow({ summary, owners, reload }) {
           <label className="field">Amount / month
             <input type="number" step="any" required value={rf.amount_monthly}
               onChange={(e) => setRf({ ...rf, amount_monthly: e.target.value })} /></label>
+          <label className="field">Treat as
+            <select value={String(rf.counts_as_investment)}
+              onChange={(e) => setRf({ ...rf, counts_as_investment: e.target.value === 'true' })}>
+              <option value="true">Investment (money you keep)</option>
+              <option value="false">Expense (money you spend)</option>
+            </select></label>
           <button className="btn" type="submit">Add</button>
         </form>
+        <p className="small muted">
+          PF, NPS and ESOP contributions are savings, not spending — mark them as
+          investments so the surplus and savings rate stay honest.
+        </p>
         {rec.length > 0 && (
           <table className="data" style={{ marginTop: 10 }}>
             <thead><tr><th>Name</th><th>Kind</th><th className="num">Monthly</th><th></th></tr></thead>
             <tbody>{rec.map((r) => (
               <tr key={r.id}>
-                <td>{r.name}</td><td>{r.kind}{r.counts_as_investment ? ' · investment' : ''}</td>
+                <td>{r.name}</td>
+                <td>
+                  {r.kind}{' '}
+                  <button className="icon" style={{ fontSize: 12 }}
+                    title="Click to switch between investment and expense"
+                    onClick={async () => {
+                      await api.put('/api/recurring/' + r.id,
+                        { counts_as_investment: !r.counts_as_investment })
+                      refresh()
+                    }}>
+                    {r.counts_as_investment ? '· investment ⇄' : '· expense ⇄'}
+                  </button>
+                </td>
                 <td className="num">{inr(r.amount_monthly)}</td>
                 <td><button className="icon" onClick={async () => { await api.del('/api/recurring/' + r.id); refresh() }}>🗑</button></td>
               </tr>

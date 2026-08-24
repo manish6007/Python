@@ -103,3 +103,27 @@ def test_amortization_and_prepay():
 def test_emi_not_covering_interest():
     rows, months = analytics.amortization_schedule(1000000, 12.0, 5000)
     assert months is None
+
+
+def test_expense_average_uses_months_with_data_not_window():
+    """One month of expenses in a 3-month window must not be divided by 3."""
+    rec = []
+    cf = analytics.monthly_cashflow(861000, 33000, 3, rec,
+                                    income_months=3, expense_months=1)
+    assert cf["income_m"] == 287000        # 3 months of salary -> /3
+    assert cf["expense_m"] == 33000        # 1 month of spend   -> /1
+    assert cf["surplus_m"] == 287000 - 33000
+    assert cf["income_months"] == 3
+    assert cf["expense_months"] == 1
+
+
+def test_cashflow_divisors_fall_back_to_window():
+    cf = analytics.monthly_cashflow(300000, 90000, 3, [])
+    assert cf["income_m"] == 100000
+    assert cf["expense_m"] == 30000
+
+
+def test_cashflow_zero_months_does_not_divide_by_zero():
+    cf = analytics.monthly_cashflow(0, 0, 3, [], income_months=0,
+                                    expense_months=0)
+    assert cf["income_m"] == 0 and cf["expense_m"] == 0

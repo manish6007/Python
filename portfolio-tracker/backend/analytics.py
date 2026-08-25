@@ -139,6 +139,160 @@ def liquid_total(holdings, as_of=None, fd_liquid_months=LIQUID_FD_MONTHS):
                if is_liquid(h, as_of, fd_liquid_months))
 
 
+# Kinds that come out of payroll rather than being chosen each month.
+PAYROLL_KINDS = {"pf", "nps", "esop"}
+
+# Simplified long-term holding periods, in months. Real tax law has more
+# cases than this (SGB maturity, post-2023 debt funds, unlisted shares); the
+# export says so rather than pretending otherwise.
+LONG_TERM_MONTHS_EQUITY = 12
+LONG_TERM_MONTHS_OTHER = 24
+EQUITY_MF_CATEGORIES = {"equity", "elss", "hybrid"}
+
+BUCKET_KEYS = ("equity", "debt", "gold", "real_estate", "cash", "other")
+
+
+def holding_splits(h):
+    """How this holding's value divides across buckets, as fractions.
+
+    A multi-asset fund is not 100% equity. When meta['splits'] gives
+    percentages per bucket they are honoured (normalised to 1); otherwise the
+    holding sits entirely in its single bucket.
+    """
+    meta = h.get("meta") or {}
+    raw = meta.get("splits")
+    if isinstance(raw, dict) and raw:
+        vals = {k: float(v) for k, v in raw.items()
+                if k in BUCKET_KEYS and float(v or 0) > 0}
+        total = sum(vals.values())
+        if total > 0:
+            return {k: v / total for k, v in vals.items()}
+    return {holding_bucket(h): 1.0}
+
+
+def has_split(h):
+    return len(holding_splits(h)) > 1
+
+
+def reconcile(recurring, loans, holdings=None, as_of=None):
+    """Inconsistencies a human reviewer would otherwise have to guess about.
+
+    Returns dicts of {level, code, message}. These are reported, never
+    silently corrected -- the app cannot know which side is right.
+    """
+    as_of = as_of or date.today()
+    holdings = holdings or []
+    out = []
+
+    emis = [r for r in recurring if r.get("kind") == "emi"]
+    emi_total = sum(r["amount_monthly"] for r in emis)
+    loan_emi_total = sum(loan.get("emi") or 0 for loan in loans)
+    if emis and not loans:
+        out.append({
+            "level": "warning", "code": "emi_without_loan",
+            "message": "%d EMI(s) totalling %s/month are recorded with no loan "
+                       "behind them, so the interest rate, outstanding balance "
+                       "and remaining tenure are unknown. Add them on the Loans "
+                       "page -- prepay-vs-invest and any review depend on the "
+                       "rate." % (len(emis), _inr(emi_total))})
+    elif emis and loans and abs(emi_total - loan_emi_total) > max(
+            0.01 * max(emi_total, loan_emi_total), 100):
+        out.append({
+            "level": "warning", "code": "emi_mismatch",
+            "message": "EMI outflows total %s/month but the recorded loans' "
+                       "EMIs total %s/month. One of the two is out of date."
+                       % (_inr(emi_total), _inr(loan_emi_total))})
+    for loan in loans:
+        if (loan.get("emi") or 0) > 0 and not emis:
+            out.append({
+                "level": "warning", "code": "loan_without_emi",
+                "message": "Loan '%s' has an EMI of %s but no matching committed "
+                           "outflow, so it is missing from your monthly surplus."
+                           % (loan.get("name", "loan"), _inr(loan["emi"]))})
+            break
+
+    hybrid = [h for h in holdings
+              if h.get("asset_class") == "mutual_fund"
+              and ((h.get("meta") or {}).get("category") or "").lower()
+              in ("hybrid", "multi_asset")
+              and not has_split(h)]
+    if hybrid:
+        out.append({
+            "level": "warning", "code": "hybrid_without_split",
+            "message": "%d hybrid/multi-asset fund(s) are counted 100%% as "
+                       "equity because no look-through split is set, which "
+                       "understates the debt and gold you already hold: %s."
+                       % (len(hybrid), ", ".join(h.get("name", "?")
+                                                 for h in hybrid[:3]))})
+
+    stale = [h for h in holdings
+             if h.get("asset_class") in ("mutual_fund", "stock")
+             and h.get("price_date")
+             and (as_of - _parse_date(h["price_date"])).days > 7]
+    if stale:
+        out.append({
+            "level": "info", "code": "stale_prices",
+            "message": "%d holding(s) were last priced more than a week ago; "
+                       "refresh prices before relying on the valuation."
+                       % len(stale)})
+
+    undated_fds = [h for h in holdings if h.get("asset_class") == "fd"
+                   and not (h.get("meta") or {}).get("maturity_date")]
+    if undated_fds:
+        out.append({
+            "level": "info", "code": "fd_without_maturity",
+            "message": "%d fixed deposit(s) have no maturity date, so they are "
+                       "treated as locked and excluded from your emergency "
+                       "fund." % len(undated_fds)})
+    return out
+
+
+def holding_term(h, as_of=None):
+    """(term, days_held) using a simplified long-term rule; None when unknown."""
+    as_of = as_of or date.today()
+    bought = _parse_date((h.get("meta") or {}).get("purchase_date"))
+    if not bought:
+        return None, None
+    days = (as_of - bought).days
+    cls = h.get("asset_class")
+    cat = ((h.get("meta") or {}).get("category") or "").lower()
+    equity_like = cls in ("stock", "reit") or (
+        cls == "mutual_fund" and cat in EQUITY_MF_CATEGORIES)
+    months = LONG_TERM_MONTHS_EQUITY if equity_like else LONG_TERM_MONTHS_OTHER
+    return ("long" if days >= months * 30.44 else "short"), days
+
+
+def unrealised_positions(holdings, as_of=None):
+    """Per-holding unrealised gain/loss with short/long-term split."""
+    as_of = as_of or date.today()
+    rows, totals = [], {"gain": 0.0, "loss": 0.0, "short_gain": 0.0,
+                        "long_gain": 0.0, "short_loss": 0.0, "long_loss": 0.0,
+                        "undated": 0}
+    for h in holdings:
+        cost = holding_cost(h)
+        value = holding_value(h, as_of)
+        if not cost:
+            continue
+        pnl = value - cost
+        term, days = holding_term(h, as_of)
+        if term is None:
+            totals["undated"] += 1
+        rows.append({"name": h.get("name"), "asset_class": h.get("asset_class"),
+                     "invested": round(cost, 2), "current_value": round(value, 2),
+                     "unrealised": round(pnl, 2), "term": term,
+                     "days_held": days})
+        key = "gain" if pnl >= 0 else "loss"
+        totals[key] += pnl
+        if term:
+            totals["%s_%s" % (term, key)] += pnl
+    totals = {k: (round(v, 2) if isinstance(v, float) else v)
+              for k, v in totals.items()}
+    totals["losers"] = sum(1 for r in rows if r["unrealised"] < 0)
+    totals["count"] = len(rows)
+    rows.sort(key=lambda r: r["unrealised"])
+    return {"positions": rows, "totals": totals}
+
+
 def aggregate(holdings, as_of=None):
     """Totals by asset class, by owner, by bucket, and overall."""
     as_of = as_of or date.today()
@@ -150,8 +304,8 @@ def aggregate(holdings, as_of=None):
         by_class[h.get("asset_class")] = by_class.get(h.get("asset_class"), 0.0) + v
         owner = h.get("owner") or "Unassigned"
         by_owner[owner] = by_owner.get(owner, 0.0) + v
-        b = holding_bucket(h)
-        by_bucket[b] = by_bucket.get(b, 0.0) + v
+        for b, frac in holding_splits(h).items():
+            by_bucket[b] = by_bucket.get(b, 0.0) + v * frac
     return {"total": total, "by_class": by_class,
             "by_owner": by_owner, "by_bucket": by_bucket}
 
@@ -250,6 +404,12 @@ def monthly_cashflow(income_total, expense_total, months, recurring,
     emi_m = sum(r["amount_monthly"] for r in recurring if r.get("kind") == "emi")
     committed_invest_m = sum(r["amount_monthly"] for r in recurring
                              if r.get("counts_as_investment"))
+    # Payroll deductions and discretionary SIPs are both saving, but they are
+    # not interchangeable -- one is chosen every month, the other is not.
+    payroll_invest_m = sum(r["amount_monthly"] for r in recurring
+                           if r.get("counts_as_investment")
+                           and r.get("kind") in PAYROLL_KINDS)
+    sip_m = committed_invest_m - payroll_invest_m
     other_committed_m = sum(r["amount_monthly"] for r in recurring
                             if r.get("kind") != "emi"
                             and not r.get("counts_as_investment"))
@@ -261,6 +421,7 @@ def monthly_cashflow(income_total, expense_total, months, recurring,
     expense_m = expense_entries_m + recurring_expense_m
     surplus = income_m - expense_m - emi_m - committed_invest_m
     return {"income_m": income_m, "expense_m": expense_m, "emi_m": emi_m,
+            "sip_m": sip_m, "payroll_invest_m": payroll_invest_m,
             "expense_entries_m": expense_entries_m,
             "recurring_expense_m": recurring_expense_m,
             "income_months": income_div,
@@ -390,15 +551,23 @@ def suggestions(context):
     under = [d for d in drift if d["drift_pct"] < -2.0 and d["target_pct"] > 0]
     if under:
         worst = under[0]
+        gap = max(worst["gap_amount"], 0.0)
+        # A percentage gap expressed as a lump sum reads as an instruction to
+        # move that much money today. Framing it against monthly surplus says
+        # what it actually is: a direction for new money.
+        months = gap / surplus if surplus > 0 else None
+        pace = ("about %.0f months of your %s/month surplus"
+                % (months, _inr(surplus))) if months and months >= 1 else (
+            "well inside one month of your surplus")
         out.append({
             "priority": 2,
             "title": "Rebalance: %s is underweight" % worst["bucket"],
-            "detail": "Actual %.1f%% vs target %.1f%%. Direct roughly "
-                      "%s of new money to %s before topping up "
-                      "overweight classes." % (worst["actual_pct"],
-                                               worst["target_pct"],
-                                               _inr(max(worst["gap_amount"], 0.0)),
-                                               worst["bucket"])})
+            "detail": "Actual %.1f%% vs target %.1f%%, a gap of %s — %s. "
+                      "Steer new monthly money towards %s rather than moving a "
+                      "lump sum; if the target itself no longer fits your "
+                      "horizon, change the target instead."
+                      % (worst["actual_pct"], worst["target_pct"], _inr(gap),
+                         pace, worst["bucket"])})
 
     idle = context.get("idle_savings", 0.0)
     threshold = context.get("savings_threshold", 0.0)

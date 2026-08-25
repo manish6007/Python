@@ -1,5 +1,6 @@
 import { api, BUCKET_LABELS, inr } from '../api'
 import { AllocationChart, DonutByClass, OwnerBar, TrendChart } from '../components/Charts'
+import Warnings from '../components/Warnings'
 
 export default function Dashboard({ summary, meta, reload }) {
   const s = summary
@@ -27,6 +28,7 @@ export default function Dashboard({ summary, meta, reload }) {
           having the cash on the day.
         </div>
       )}
+      <Warnings items={s.warnings} compact />
       {empty && (
         <div className="notice">
           No holdings yet — add them in <b>Portfolio</b>, or load sample data

@@ -307,3 +307,118 @@ def test_upcoming_lumpy_repeats_within_a_long_horizon():
         [{"name": "Q bill", "amount": 1000, "frequency": "quarterly",
           "next_due": "2026-09-01"}], date(2026, 8, 25), 12)
     assert len(out) == 4
+
+
+# ---- recurring classification -------------------------------------------
+def test_payroll_and_sip_are_reported_separately():
+    rec = [{"kind": "sip", "counts_as_investment": True, "amount_monthly": 100000},
+           {"kind": "pf", "counts_as_investment": True, "amount_monthly": 32000},
+           {"kind": "nps", "counts_as_investment": True, "amount_monthly": 10000},
+           {"kind": "esop", "counts_as_investment": True, "amount_monthly": 5000}]
+    cf = analytics.monthly_cashflow(287000, 0, 1, rec)
+    assert cf["sip_m"] == 100000            # what the user actually chooses
+    assert cf["payroll_invest_m"] == 47000  # PF + NPS + ESOP
+    assert cf["committed_invest_m"] == 147000
+
+
+# ---- look-through splits -------------------------------------------------
+def test_split_distributes_one_holding_across_buckets():
+    h = {"asset_class": "mutual_fund", "units": 1, "last_price": 100000,
+         "meta": {"category": "hybrid",
+                  "splits": {"equity": 65, "debt": 20, "gold": 15}}}
+    agg = analytics.aggregate([h])
+    assert agg["total"] == 100000
+    assert agg["by_bucket"]["equity"] == 65000
+    assert agg["by_bucket"]["gold"] == 15000
+    assert abs(sum(agg["by_bucket"].values()) - 100000) < 0.01
+
+
+def test_splits_normalise_when_they_do_not_total_100():
+    h = {"asset_class": "mutual_fund", "meta": {"splits": {"equity": 1, "gold": 1}}}
+    assert analytics.holding_splits(h) == {"equity": 0.5, "gold": 0.5}
+
+
+def test_no_split_keeps_the_single_bucket():
+    h = {"asset_class": "stock"}
+    assert analytics.holding_splits(h) == {"equity": 1.0}
+    assert not analytics.has_split(h)
+
+
+# ---- reconciliation ------------------------------------------------------
+def test_emi_without_a_loan_is_flagged():
+    codes = [w["code"] for w in analytics.reconcile(
+        [{"kind": "emi", "amount_monthly": 23300}], [])]
+    assert "emi_without_loan" in codes
+
+
+def test_emi_matching_its_loan_is_not_flagged():
+    codes = [w["code"] for w in analytics.reconcile(
+        [{"kind": "emi", "amount_monthly": 23300}],
+        [{"name": "Home", "emi": 23300}])]
+    assert "emi_without_loan" not in codes and "emi_mismatch" not in codes
+
+
+def test_emi_disagreeing_with_its_loan_is_flagged():
+    codes = [w["code"] for w in analytics.reconcile(
+        [{"kind": "emi", "amount_monthly": 23300}],
+        [{"name": "Home", "emi": 42000}])]
+    assert "emi_mismatch" in codes
+
+
+def test_hybrid_fund_without_a_split_is_flagged():
+    hs = [{"asset_class": "mutual_fund", "name": "Multi Asset",
+           "meta": {"category": "hybrid"}}]
+    assert "hybrid_without_split" in [w["code"] for w in
+                                      analytics.reconcile([], [], hs)]
+    hs[0]["meta"]["splits"] = {"equity": 65, "debt": 20, "gold": 15}
+    assert "hybrid_without_split" not in [w["code"] for w in
+                                          analytics.reconcile([], [], hs)]
+
+
+# ---- unrealised gains / tax terms ----------------------------------------
+def test_holding_term_uses_twelve_months_for_equity():
+    today = date(2026, 8, 25)
+    h = {"asset_class": "stock", "meta": {"purchase_date": "2025-01-01"}}
+    assert analytics.holding_term(h, today)[0] == "long"
+    h["meta"]["purchase_date"] = "2026-06-01"
+    assert analytics.holding_term(h, today)[0] == "short"
+
+
+def test_holding_term_uses_twentyfour_months_for_non_equity():
+    today = date(2026, 8, 25)
+    h = {"asset_class": "gold_physical", "meta": {"purchase_date": "2025-06-01"}}
+    assert analytics.holding_term(h, today)[0] == "short"   # 14 months
+    h["meta"]["purchase_date"] = "2024-01-01"
+    assert analytics.holding_term(h, today)[0] == "long"
+
+
+def test_holding_term_unknown_without_a_purchase_date():
+    assert analytics.holding_term({"asset_class": "stock"})[0] is None
+
+
+def test_unrealised_positions_split_winners_and_losers():
+    today = date(2026, 8, 25)
+    hs = [{"name": "Winner", "asset_class": "stock", "units": 10,
+           "avg_cost": 100, "last_price": 150,
+           "meta": {"purchase_date": "2024-01-01"}},
+          {"name": "Loser", "asset_class": "stock", "units": 10,
+           "avg_cost": 100, "last_price": 70,
+           "meta": {"purchase_date": "2026-07-01"}},
+          {"name": "Undated", "asset_class": "stock", "units": 10,
+           "avg_cost": 100, "last_price": 90}]
+    r = analytics.unrealised_positions(hs, today)
+    t = r["totals"]
+    assert t["gain"] == 500 and t["loss"] == -400   # -300 and -100
+    assert t["long_gain"] == 500 and t["short_loss"] == -300
+    assert t["losers"] == 2 and t["undated"] == 1
+    assert r["positions"][0]["name"] == "Loser"      # worst first
+
+
+def test_rebalance_suggestion_is_framed_in_months_of_surplus():
+    out = analytics.suggestions({
+        "surplus_m": 100000,
+        "drift": [{"bucket": "gold", "drift_pct": -8.8, "target_pct": 10.0,
+                   "actual_pct": 1.2, "gap_amount": 1120000}]})
+    detail = [s for s in out if "Rebalance" in s["title"]][0]["detail"]
+    assert "11 months" in detail
+    assert "lump sum" in detail

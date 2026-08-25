@@ -76,6 +76,8 @@ def summary():
         "loans": data["loans"],
         "recurring": data["recurring"],
         "lumpy_upcoming": analytics.upcoming_lumpy(data["recurring"]),
+        "warnings": data["warnings"],
+        "unrealised": analytics.unrealised_positions(data["holdings"]),
         "snapshots": [{"date": sn.date.isoformat(), "net_worth": sn.net_worth,
                        "total_assets": sn.total_assets,
                        "total_liabilities": sn.total_liabilities}
@@ -242,6 +244,7 @@ async def import_holdings(file: UploadFile):
                         ("category", (r.get("category") or "").strip()),
                         ("bucket", (r.get("bucket") or "").strip()),
                         ("maturity_date", (r.get("maturity_date") or "").strip()),
+                        ("purchase_date", (r.get("purchase_date") or "").strip()),
                     ) if v}))
             if cls in analytics.UNIT_PRICED:
                 h.last_price = float(r.get("last_price") or 0) or h.avg_cost
@@ -604,7 +607,7 @@ def take_snapshot():
 
 # ---------------- settings ----------------
 SETTING_KEYS = ("emergency_fund_target", "savings_float", "tax_80c_used",
-                "tax_80ccd1b_used", "age")
+                "tax_80ccd1b_used", "age", "income_basis")
 
 
 @app.get("/api/targets/presets")
@@ -653,7 +656,9 @@ def build_snapshot(privacy: bool):
     data = service.full_pipeline(s)
     snap = export_mod.build_snapshot(
         data["holdings"], data["loans"], data["cashflow"], data["drift"],
-        data["suggestions"], data["targets"], privacy_safe=privacy)
+        data["suggestions"], data["targets"], privacy_safe=privacy,
+        recurring=data["recurring"], warnings=data["warnings"],
+        income_basis=get_setting(s, "income_basis", ""))
     s.close()
     return snap
 

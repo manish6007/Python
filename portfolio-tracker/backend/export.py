@@ -24,6 +24,13 @@ give an educational review (not personalized investment advice):
 6. Emergency fund adequacy versus monthly committed outflows.
 7. Top 5 concrete action items, ordered by impact.
 
+Before advising, read `data_quality`: it states how many months each average
+rests on, whether income is net or gross, how committed money splits between
+payroll deductions and chosen SIPs, and what the tracker itself believes is
+inconsistent or missing. Where a figure is flagged as unknown, ask rather than
+assume it. `committed_outflows` lists each commitment as actually billed, and
+`bucket_split_pct` shows any fund counted across several asset classes.
+
 Snapshot follows below.
 """
 
@@ -36,13 +43,19 @@ def _mask(s, keep=4):
 
 
 def build_snapshot(holdings, loans, cashflow, drift, sugg, targets,
-                   privacy_safe=True, as_of=None):
+                   privacy_safe=True, as_of=None, recurring=None,
+                   warnings=None, income_basis=""):
     """Assemble the full export dict from pre-computed pieces.
 
-    holdings: list of holding dicts (see analytics.holding_value) with
-    extra keys name/identifier/owner.
+    Everything a reviewer would otherwise have to assume is stated: how the
+    committed money splits between payroll and chosen SIPs, the actual
+    recurring outflows rather than one aggregate, loan rates, how many months
+    of data each average rests on, and what the app itself thinks is
+    inconsistent about the data.
     """
     as_of = as_of or date.today()
+    recurring = recurring or []
+    warnings = warnings or []
     agg = analytics.aggregate(holdings, as_of)
     total_liab = sum(loan["principal_outstanding"] for loan in loans)
 
@@ -59,8 +72,14 @@ def build_snapshot(holdings, loans, cashflow, drift, sugg, targets,
                      ("savings", "fd", "epf", "ppf", "nps") else h.get("name", "")),
             "identifier": _mask(h.get("identifier")) if privacy_safe else h.get("identifier", ""),
             "bucket": analytics.holding_bucket(h),
+            "bucket_split_pct": ({k: round(v * 100, 1) for k, v in
+                                  analytics.holding_splits(h).items()}
+                                 if analytics.has_split(h) else None),
             "invested": round(analytics.holding_cost(h), 2),
             "current_value": round(analytics.holding_value(h, as_of), 2),
+            "unrealised": round(analytics.holding_value(h, as_of)
+                                - analytics.holding_cost(h), 2),
+            "term": analytics.holding_term(h, as_of)[0],
             "rate_pct": h.get("rate") or None,
         })
 
@@ -93,6 +112,42 @@ def build_snapshot(holdings, loans, cashflow, drift, sugg, targets,
         "holdings": hold_rows,
         "liabilities": loan_rows,
         "monthly_cashflow": {k: round(v, 2) for k, v in cashflow.items()},
+        "committed_outflows": [{
+            "name": r.get("name"),
+            "kind": r.get("kind"),
+            "treated_as": ("investment" if r.get("counts_as_investment")
+                           else "expense"),
+            "payroll_deduction": r.get("kind") in analytics.PAYROLL_KINDS,
+            "amount_per_payment": round(r.get("amount") or 0, 2),
+            "frequency": r.get("frequency"),
+            "amount_monthly": round(r.get("amount_monthly") or 0, 2),
+            "amount_annual": round(analytics.to_annual(
+                r.get("amount") or 0, r.get("frequency")), 2),
+            "next_due": r.get("next_due"),
+        } for r in recurring],
+        "unrealised": analytics.unrealised_positions(holdings, as_of)["totals"],
+        "data_quality": {
+            "income_basis": income_basis or "unspecified (ask before assuming "
+                                            "net or gross)",
+            "income_months_logged": cashflow.get("income_months"),
+            "expense_months_logged": cashflow.get("expense_months"),
+            "expenses_include_recurring": True,
+            "expense_split": {
+                "logged_entries_monthly": round(
+                    cashflow.get("expense_entries_m", 0), 2),
+                "recurring_costs_monthly": round(
+                    cashflow.get("recurring_expense_m", 0), 2)},
+            "investment_split": {
+                "chosen_sips_monthly": round(cashflow.get("sip_m", 0), 2),
+                "payroll_deductions_monthly": round(
+                    cashflow.get("payroll_invest_m", 0), 2)},
+            "long_term_rule": "simplified: %d months for listed equity and "
+                              "equity-oriented funds, %d months otherwise; "
+                              "confirm specifics with a CA"
+                              % (analytics.LONG_TERM_MONTHS_EQUITY,
+                                 analytics.LONG_TERM_MONTHS_OTHER),
+            "warnings": warnings,
+        },
         "suggestions": sugg,
     }
 

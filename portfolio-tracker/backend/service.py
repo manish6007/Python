@@ -33,6 +33,11 @@ def holding_out(h):
     d["current_value"] = round(analytics.holding_value(d), 2)
     d["invested"] = round(analytics.holding_cost(d), 2)
     d["bucket"] = analytics.holding_bucket(d)
+    value = d["current_value"]
+    d["splits"] = {k: round(value * v, 2)
+                   for k, v in analytics.holding_splits(d).items()}
+    d["has_split"] = analytics.has_split(d)
+    d["term"] = analytics.holding_term(d)[0]
     for k in ("value_date", "price_date", "start_date"):
         d[k] = d[k].isoformat() if d[k] else None
     return d
@@ -136,7 +141,9 @@ def full_pipeline(session):
     ctx, drift, targets, agg = build_suggestion_context(
         session, holdings, loans, cashflow)
     sugg = analytics.suggestions(ctx)
+    warnings = analytics.reconcile(recurring, loans, holdings)
     return {"holdings": holdings, "loans": loans, "recurring": recurring,
+            "warnings": warnings,
             "cashflow": cashflow, "drift": drift, "targets": targets,
             "suggestions": sugg, "agg": agg}
 

@@ -193,6 +193,24 @@ export default function Settings({ owners, reload }) {
               </label>
             ))}
         </div>
+        <div className="row">
+          <label className="field">Salary figure you enter is
+            <select value={settings.income_basis || ''}
+              onChange={(e) => setSettings({ ...settings, income_basis: e.target.value })}>
+              <option value="">Unspecified</option>
+              <option value="net take-home (after tax and deductions)">
+                Net take-home (after tax &amp; deductions)
+              </option>
+              <option value="gross (before tax and deductions)">
+                Gross (before tax &amp; deductions)
+              </option>
+            </select>
+          </label>
+        </div>
+        <p className="small muted">
+          Stating this stops a reviewer mistaking gross pay for spendable
+          income — the single most common reason a plan does not reconcile.
+        </p>
         <div className="row" style={{ marginTop: 12 }}>
           <button className="btn" onClick={save}>Save settings</button>
         </div>

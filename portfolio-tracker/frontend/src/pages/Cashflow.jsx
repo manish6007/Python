@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api, inr } from '../api'
+import Warnings from '../components/Warnings'
 
 const today = () => new Date().toISOString().slice(0, 10)
 
@@ -133,7 +134,7 @@ export default function Cashflow({ summary, owners, reload }) {
           <div className="label">EMIs + investing</div>
           <div className="value">{inr(cf.emi_m + cf.committed_invest_m)}</div>
           <div className="sub">
-            EMI {inr(cf.emi_m)} · investing {inr(cf.committed_invest_m)}
+            EMI {inr(cf.emi_m)} · SIPs {inr(cf.sip_m)}{cf.payroll_invest_m > 0 && ` · payroll ${inr(cf.payroll_invest_m)}`}
             {cf.recurring_expense_m > 0 &&
               ` · recurring costs ${inr(cf.recurring_expense_m)} counted in expenses`}
           </div>
@@ -153,6 +154,8 @@ export default function Cashflow({ summary, owners, reload }) {
           either way. Log the missing months' expenses for a truer surplus.
         </div>
       )}
+
+      <Warnings items={summary.warnings} />
 
       {lumpy.length > 0 && (
         <div className="card" style={{ borderColor: 'var(--warning)' }}>
@@ -193,11 +196,12 @@ export default function Cashflow({ summary, owners, reload }) {
           <label className="field">Kind
             <select value={rf.kind} onChange={(e) => setRf({
               ...rf, kind: e.target.value,
-              counts_as_investment: ['sip', 'pf', 'nps'].includes(e.target.value),
+              counts_as_investment: ['sip', 'pf', 'nps', 'esop'].includes(e.target.value),
             })}>
               <option value="sip">SIP / savings plan</option>
               <option value="pf">PF / EPF contribution</option>
               <option value="nps">NPS contribution</option>
+              <option value="esop">ESOP / RSU</option>
               <option value="emi">EMI</option>
               <option value="premium">Insurance premium</option>
               <option value="subscription">Subscription</option>

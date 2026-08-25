@@ -9,7 +9,7 @@ const BUCKETS = ['equity', 'debt', 'gold', 'real_estate', 'cash', 'other']
 const emptyForm = {
   asset_class: 'mutual_fund', name: '', identifier: '', units: '', avg_cost: '',
   last_price: '', manual_value: '', rate: '', start_date: '', category: 'equity',
-  bucket: '', maturity_date: '', notes: '',
+  bucket: '', maturity_date: '', purchase_date: '', notes: '',
 }
 
 export default function Portfolio({ summary, meta, owners, reload }) {
@@ -21,6 +21,8 @@ export default function Portfolio({ summary, meta, owners, reload }) {
   const [editId, setEditId] = useState(null)
   const [editVal, setEditVal] = useState('')
   const [editMaturity, setEditMaturity] = useState('')
+  const [splitId, setSplitId] = useState(null)
+  const [splitVals, setSplitVals] = useState({})
   const fileRef = useRef()
 
   const cls = form.asset_class
@@ -46,6 +48,7 @@ export default function Portfolio({ summary, meta, owners, reload }) {
         ...(form.bucket ? { bucket: form.bucket } : {}),
         ...(cls === 'fd' && form.maturity_date
           ? { maturity_date: form.maturity_date } : {}),
+        ...(form.purchase_date ? { purchase_date: form.purchase_date } : {}),
       },
     }
     try {
@@ -112,12 +115,12 @@ export default function Portfolio({ summary, meta, owners, reload }) {
     fileRef.current.value = ''
   }
 
-  const template = 'owner,asset_class,name,identifier,units,avg_cost,manual_value,last_price,rate,start_date,category,bucket,maturity_date\n' +
-    'Me,mutual_fund,Parag Parikh Flexi Cap Dir-G,122639,512.33,55.1,0,81.2,0,,equity,,\n' +
-    'Me,stock,Reliance Industries,RELIANCE,10,2400,0,2950,0,,,,\n' +
-    'Wife,fd,HDFC sweep FD,XXXX1234,0,500000,0,0,7.1,2025-01-15,,cash,2026-01-15\n' +
-    'Me,fd,SBI 5yr tax saver FD,XXXX9911,0,150000,0,0,7.0,2024-03-01,,,2029-03-01\n' +
-    'Me,ppf,SBI PPF,,0,0,450000,0,7.1,,,,\n'
+  const template = 'owner,asset_class,name,identifier,units,avg_cost,manual_value,last_price,rate,start_date,category,bucket,maturity_date,purchase_date\n' +
+    'Me,mutual_fund,Parag Parikh Flexi Cap Dir-G,122639,512.33,55.1,0,81.2,0,,equity,,,2023-04-10\n' +
+    'Me,stock,Reliance Industries,RELIANCE,10,2400,0,2950,0,,,,,2024-11-02\n' +
+    'Wife,fd,HDFC sweep FD,XXXX1234,0,500000,0,0,7.1,2025-01-15,,cash,2026-01-15,\n' +
+    'Me,fd,SBI 5yr tax saver FD,XXXX9911,0,150000,0,0,7.0,2024-03-01,,,2029-03-01,\n' +
+    'Me,ppf,SBI PPF,,0,0,450000,0,7.1,,,,,\n'
 
   return (
     <div className="grid">
@@ -193,6 +196,11 @@ export default function Portfolio({ summary, meta, owners, reload }) {
                 <input type="number" step="any" value={form.rate} onChange={set('rate')} />
               </label>
             </>)}
+            <label className="field">Bought on
+              <input type="date" value={form.purchase_date}
+                title="Enables short vs long-term classification"
+                onChange={set('purchase_date')} />
+            </label>
             <label className="field">Counts as
               <select value={form.bucket} onChange={set('bucket')}>
                 <option value="">Auto (by asset class)</option>
@@ -209,6 +217,8 @@ export default function Portfolio({ summary, meta, owners, reload }) {
             sweep FD under Cash so it counts toward your emergency fund, while
             a 5-year FD stays in Debt. FDs also count as emergency money
             automatically once their maturity date is within 12 months.
+            <b> Bought on</b> is what lets the app tell short-term from
+            long-term holdings — without it, no tax view is possible.
           </p>
         </form>
       </div>
@@ -250,7 +260,7 @@ export default function Portfolio({ summary, meta, owners, reload }) {
                 <th className="num">P&L</th><th>Priced</th><th></th>
               </tr></thead>
               <tbody>
-                {holdings.map((h) => (
+                {holdings.map((h) => [(
                   <tr key={h.id}>
                     <td>{h.owner}</td>
                     <td>{meta.asset_class_labels[h.asset_class]}</td>
@@ -271,6 +281,14 @@ export default function Portfolio({ summary, meta, owners, reload }) {
                           <option key={b} value={b}>{BUCKET_LABELS[b]}</option>
                         ))}
                       </select>
+                      <button className="icon" title="Split across buckets (multi-asset funds)"
+                        onClick={() => {
+                          setSplitId(splitId === h.id ? null : h.id)
+                          setSplitVals(h.meta?.splits || {})
+                        }}>⊞</button>
+                      {h.has_split && (
+                        <span className="small muted"> split</span>
+                      )}
                       {h.asset_class === 'fd' && (
                         <span className="small muted"> {h.meta?.maturity_date
                           ? 'mat. ' + h.meta.maturity_date : 'no maturity set'}</span>
@@ -301,20 +319,102 @@ export default function Portfolio({ summary, meta, owners, reload }) {
                       <button className="icon" title="Delete" onClick={() => del(h)}>🗑</button>
                     </td>
                   </tr>
-                ))}
+                ),
+                splitId === h.id && (
+                  <tr key={h.id + '-split'}>
+                    <td colSpan={9} style={{ background: 'var(--page)' }}>
+                      <div className="row" style={{ alignItems: 'end' }}>
+                        <span className="small">
+                          <b>Look-through split for {h.name}</b><br />
+                          <span className="muted">
+                            A multi-asset fund is not 100% equity. Enter the
+                            fund&apos;s own asset mix; leave all blank for automatic.
+                          </span>
+                        </span>
+                        {BUCKETS.map((b) => (
+                          <label className="field" key={b}>{BUCKET_LABELS[b]} %
+                            <input type="number" step="any" style={{ width: 78 }}
+                              value={splitVals[b] ?? ''}
+                              onChange={(e) => setSplitVals({
+                                ...splitVals, [b]: e.target.value,
+                              })} />
+                          </label>
+                        ))}
+                        <button className="btn" onClick={async () => {
+                          const clean = {}
+                          for (const [k, v] of Object.entries(splitVals)) {
+                            if (+v > 0) clean[k] = +v
+                          }
+                          await api.put('/api/holdings/' + h.id, {
+                            meta: { splits: Object.keys(clean).length ? clean : '' },
+                          })
+                          setSplitId(null)
+                          reload()
+                        }}>Save split</button>
+                        <button className="btn secondary"
+                          onClick={() => setSplitId(null)}>Cancel</button>
+                      </div>
+                      <p className="small muted">
+                        Percentages are normalised, so 65/20/15 and 13/4/3 mean
+                        the same thing.
+                      </p>
+                    </td>
+                  </tr>
+                )]).flat().filter(Boolean)}
               </tbody>
             </table>
           </div>
         )}
       </div>
 
+      {summary.unrealised && summary.unrealised.totals.count > 0 && (
+        <div className="card">
+          <h2>Unrealised gains &amp; losses</h2>
+          <div className="grid cols-4">
+            <div className="stat">
+              <div className="label">Unrealised gains</div>
+              <div className="value pos">{inr(summary.unrealised.totals.gain)}</div>
+              <div className="sub">
+                long {inr(summary.unrealised.totals.long_gain)} · short{' '}
+                {inr(summary.unrealised.totals.short_gain)}
+              </div>
+            </div>
+            <div className="stat">
+              <div className="label">Unrealised losses</div>
+              <div className="value neg">{inr(summary.unrealised.totals.loss)}</div>
+              <div className="sub">
+                {summary.unrealised.totals.losers} of{' '}
+                {summary.unrealised.totals.count} holdings underwater
+              </div>
+            </div>
+            <div className="stat">
+              <div className="label">Net</div>
+              <div className="value">
+                {inr(summary.unrealised.totals.gain + summary.unrealised.totals.loss)}
+              </div>
+            </div>
+            <div className="stat">
+              <div className="label">Term unknown</div>
+              <div className="value">{summary.unrealised.totals.undated}</div>
+              <div className="sub">holdings with no purchase date</div>
+            </div>
+          </div>
+          <p className="small muted">
+            Long vs short term uses a simplified rule (12 months for listed
+            equity and equity funds, 24 otherwise) — confirm specifics with a
+            CA. Losses offset gains <i>before</i> any exemption applies, so
+            which year you book them in matters.
+          </p>
+        </div>
+      )}
+
       <div className="card">
         <h2>Bulk import (CSV)</h2>
         <p className="small muted">
           Columns: owner, asset_class, name, identifier, units, avg_cost,
           manual_value, last_price, rate, start_date, category, bucket,
-          maturity_date. Dates are YYYY-MM-DD; bucket overrides the
-          allocation bucket (blank = automatic).
+          maturity_date, purchase_date. Dates are YYYY-MM-DD; bucket
+          overrides the allocation bucket (blank = automatic).
         </p>
         <div className="row">
           <a className="btn secondary" style={{ textDecoration: 'none' }}

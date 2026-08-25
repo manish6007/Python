@@ -134,6 +134,7 @@ class RecurringOutflow(Base):
     kind = Column(String, default="sip")
     amount = Column(Float, default=0.0)          # per payment, as billed
     frequency = Column(String, default="monthly")
+    next_due = Column(Date, nullable=True)   # next payment date, for lumpy bills
     amount_monthly = Column(Float, nullable=False)   # derived from the two above
     counts_as_investment = Column(Integer, default=0)  # savings, not spend
 
@@ -196,6 +197,9 @@ def _migrate(engine):
                               "ADD COLUMN frequency VARCHAR"))
             conn.execute(text("UPDATE recurring_outflows "
                               "SET frequency = 'monthly'"))
+        if "next_due" not in cols:
+            conn.execute(text("ALTER TABLE recurring_outflows "
+                              "ADD COLUMN next_due DATE"))
 
 
 def get_session():

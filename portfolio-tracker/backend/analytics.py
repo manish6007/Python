@@ -253,8 +253,16 @@ def monthly_cashflow(income_total, expense_total, months, recurring,
     other_committed_m = sum(r["amount_monthly"] for r in recurring
                             if r.get("kind") != "emi"
                             and not r.get("counts_as_investment"))
-    surplus = income_m - expense_m - emi_m - other_committed_m - committed_invest_m
+    # Subscriptions, maintenance and premiums are spending, whatever their
+    # billing cycle -- so the headline expense figure includes their monthly
+    # equivalent. `expense_entries_m` keeps the ad-hoc ledger separable.
+    expense_entries_m = expense_m
+    recurring_expense_m = other_committed_m
+    expense_m = expense_entries_m + recurring_expense_m
+    surplus = income_m - expense_m - emi_m - committed_invest_m
     return {"income_m": income_m, "expense_m": expense_m, "emi_m": emi_m,
+            "expense_entries_m": expense_entries_m,
+            "recurring_expense_m": recurring_expense_m,
             "income_months": income_div,
             "expense_months": expense_div,
             "committed_invest_m": committed_invest_m,
@@ -279,6 +287,51 @@ def _inr(x):
             parts.insert(0, head)
         s = ",".join(parts + [tail])
     return ("-" if neg else "") + "\u20b9" + s
+
+
+def _add_months(d, n):
+    """Shift a date by n months, clamping the day (31 Jan + 1m -> 28 Feb)."""
+    import calendar
+    total = d.month - 1 + n
+    year = d.year + total // 12
+    month = total % 12 + 1
+    return date(year, month, min(d.day, calendar.monthrange(year, month)[1]))
+
+
+def upcoming_lumpy(recurring, as_of=None, horizon_months=3):
+    """Non-monthly payments actually falling due in the next few months.
+
+    Spreading a quarterly bill keeps the surplus honest, but the cash still
+    leaves in one lump -- this is what to keep in the buffer. Monthly items
+    are excluded (they are not lumpy) and so are entries with no due date,
+    since a date is the only thing that makes the projection real.
+    """
+    as_of = as_of or date.today()
+    horizon_end = _add_months(as_of, horizon_months)
+    out = []
+    for r in recurring:
+        freq = r.get("frequency") or "monthly"
+        step = FREQUENCY_MONTHS.get(freq, 1)
+        if step <= 1:
+            continue
+        due = _parse_date(r.get("next_due"))
+        if not due:
+            continue
+        guard = 0
+        while due < as_of and guard < 240:      # roll a stale date forward
+            due = _add_months(due, step)
+            guard += 1
+        while due <= horizon_end and guard < 240:
+            out.append({
+                "name": r.get("name"), "amount": float(r.get("amount") or 0),
+                "due_date": due.isoformat(), "frequency": freq,
+                "frequency_label": FREQUENCY_LABELS.get(freq, freq),
+                "counts_as_investment": bool(r.get("counts_as_investment")),
+            })
+            due = _add_months(due, step)
+            guard += 1
+    out.sort(key=lambda x: x["due_date"])
+    return out
 
 
 def suggestions(context):

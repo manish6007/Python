@@ -75,6 +75,7 @@ def summary():
         "holdings": holdings_out,
         "loans": data["loans"],
         "recurring": data["recurring"],
+        "lumpy_upcoming": analytics.upcoming_lumpy(data["recurring"]),
         "snapshots": [{"date": sn.date.isoformat(), "net_worth": sn.net_worth,
                        "total_assets": sn.total_assets,
                        "total_liabilities": sn.total_liabilities}
@@ -451,6 +452,7 @@ def add_recurring(payload: dict = Body(...)):
     amount = float(amount)
     r = RecurringOutflow(
         name=payload["name"], kind=kind, amount=amount, frequency=freq,
+        next_due=parse_date(payload.get("next_due")),
         amount_monthly=analytics.to_monthly(amount, freq),
         counts_as_investment=1 if payload.get("counts_as_investment",
                                               kind == "sip") else 0)
@@ -474,6 +476,8 @@ def update_recurring(rid: int, payload: dict = Body(...)):
         if payload["frequency"] not in analytics.FREQUENCY_MONTHS:
             raise HTTPException(400, "bad frequency %r" % payload["frequency"])
         r.frequency = payload["frequency"]
+    if "next_due" in payload:
+        r.next_due = parse_date(payload["next_due"])
     if payload.get("amount") is not None:
         r.amount = float(payload["amount"])
     elif payload.get("amount_monthly") is not None:

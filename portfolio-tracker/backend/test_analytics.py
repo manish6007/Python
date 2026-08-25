@@ -243,3 +243,67 @@ def test_no_entries_reports_zero_months_not_the_window():
     assert cf["expense_months"] == 0
     assert cf["expense_m"] == 0
     assert cf["income_months"] == 1
+
+
+def test_recurring_costs_are_included_in_monthly_expenses():
+    """A yearly subscription is spending, so it belongs in Expenses/month."""
+    rec = [{"kind": "subscription", "counts_as_investment": False,
+            "amount_monthly": 1000},
+           {"kind": "maintenance", "counts_as_investment": False,
+            "amount_monthly": 3000},
+           {"kind": "emi", "counts_as_investment": False,
+            "amount_monthly": 23300},
+           {"kind": "sip", "counts_as_investment": True,
+            "amount_monthly": 100000}]
+    cf = analytics.monthly_cashflow(287000, 33000, 1, rec)
+    assert cf["expense_entries_m"] == 33000      # ad-hoc ledger
+    assert cf["recurring_expense_m"] == 4000     # sub + maintenance
+    assert cf["expense_m"] == 37000              # headline figure
+    # EMIs and investments stay out of the expense figure
+    assert cf["emi_m"] == 23300
+    assert cf["committed_invest_m"] == 100000
+    # and nothing is double counted
+    assert cf["surplus_m"] == 287000 - 37000 - 23300 - 100000
+
+
+def test_add_months_clamps_short_months():
+    assert analytics._add_months(date(2026, 1, 31), 1) == date(2026, 2, 28)
+    assert analytics._add_months(date(2026, 11, 15), 3) == date(2027, 2, 15)
+
+
+def test_upcoming_lumpy_lists_due_payments_in_horizon():
+    today = date(2026, 8, 25)
+    rec = [{"name": "Home maintenance", "amount": 9000, "frequency": "quarterly",
+            "next_due": "2026-09-10"},
+           {"name": "Prime", "amount": 12000, "frequency": "yearly",
+            "next_due": "2026-10-01"},
+           {"name": "Far off", "amount": 5000, "frequency": "yearly",
+            "next_due": "2027-06-01"},
+           {"name": "SIP", "amount": 5000, "frequency": "monthly",
+            "next_due": "2026-09-01"}]
+    out = analytics.upcoming_lumpy(rec, today, 3)
+    names = [x["name"] for x in out]
+    assert names == ["Home maintenance", "Prime"]      # sorted by due date
+    assert "SIP" not in names                          # monthly is not lumpy
+    assert sum(x["amount"] for x in out) == 21000
+
+
+def test_upcoming_lumpy_rolls_a_stale_due_date_forward():
+    today = date(2026, 8, 25)
+    rec = [{"name": "Old quarterly", "amount": 3000, "frequency": "quarterly",
+            "next_due": "2025-09-05"}]
+    out = analytics.upcoming_lumpy(rec, today, 3)
+    assert len(out) == 1 and out[0]["due_date"] == "2026-09-05"
+
+
+def test_upcoming_lumpy_needs_a_due_date():
+    assert analytics.upcoming_lumpy(
+        [{"name": "No date", "amount": 9000, "frequency": "yearly"}],
+        date(2026, 8, 25)) == []
+
+
+def test_upcoming_lumpy_repeats_within_a_long_horizon():
+    out = analytics.upcoming_lumpy(
+        [{"name": "Q bill", "amount": 1000, "frequency": "quarterly",
+          "next_due": "2026-09-01"}], date(2026, 8, 25), 12)
+    assert len(out) == 4

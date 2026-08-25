@@ -55,6 +55,7 @@ def recurring_to_dict(r):
     return {
         "id": r.id, "name": r.name, "kind": r.kind,
         "amount": amount, "frequency": freq,
+        "next_due": r.next_due.isoformat() if r.next_due else None,
         "frequency_label": analytics.FREQUENCY_LABELS.get(freq, freq),
         "amount_monthly": r.amount_monthly,
         "amount_annual": analytics.to_annual(amount, freq),

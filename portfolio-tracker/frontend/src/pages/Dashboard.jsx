@@ -16,6 +16,17 @@ export default function Dashboard({ summary, meta, reload }) {
           apply an age-based or risk-profile starting point in one click.
         </div>
       )}
+      {(s.lumpy_upcoming || []).length > 0 && (
+        <div className="notice">
+          <b>⚠ {inr((s.lumpy_upcoming).reduce((a, l) => a + l.amount, 0))} of
+          lumpy bills due in the next 3 months</b> —{' '}
+          {s.lumpy_upcoming.slice(0, 3).map((l) =>
+            `${l.name} ${inr(l.amount)} on ${l.due_date}`).join(', ')}
+          {s.lumpy_upcoming.length > 3 && ` +${s.lumpy_upcoming.length - 3} more`}.
+          They are already spread into your monthly expenses; this is about
+          having the cash on the day.
+        </div>
+      )}
       {empty && (
         <div className="notice">
           No holdings yet — add them in <b>Portfolio</b>, or load sample data

@@ -49,12 +49,23 @@ def loan_to_dict(loan):
     }
 
 
+def recurring_to_dict(r):
+    freq = r.frequency or "monthly"
+    amount = r.amount if r.amount else r.amount_monthly
+    return {
+        "id": r.id, "name": r.name, "kind": r.kind,
+        "amount": amount, "frequency": freq,
+        "frequency_label": analytics.FREQUENCY_LABELS.get(freq, freq),
+        "amount_monthly": r.amount_monthly,
+        "amount_annual": analytics.to_annual(amount, freq),
+        "counts_as_investment": bool(r.counts_as_investment),
+    }
+
+
 def load_all(session):
     holdings = [holding_to_dict(h) for h in session.query(Holding).all()]
     loans = [loan_to_dict(loan) for loan in session.query(Loan).all()]
-    recurring = [{"id": r.id, "name": r.name, "kind": r.kind,
-                  "amount_monthly": r.amount_monthly,
-                  "counts_as_investment": bool(r.counts_as_investment)}
+    recurring = [recurring_to_dict(r)
                  for r in session.query(RecurringOutflow).all()]
     return holdings, loans, recurring
 

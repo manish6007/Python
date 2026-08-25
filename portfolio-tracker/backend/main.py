@@ -431,9 +431,7 @@ def delete_expense(eid: int):
 @app.get("/api/recurring")
 def list_recurring():
     s = db()
-    out = [{"id": r.id, "name": r.name, "kind": r.kind,
-            "amount_monthly": r.amount_monthly,
-            "counts_as_investment": bool(r.counts_as_investment)}
+    out = [service.recurring_to_dict(r)
            for r in s.query(RecurringOutflow).all()]
     s.close()
     return out
@@ -443,14 +441,24 @@ def list_recurring():
 def add_recurring(payload: dict = Body(...)):
     s = db()
     kind = payload.get("kind") or "sip"
-    s.add(RecurringOutflow(
-        name=payload["name"], kind=kind,
-        amount_monthly=float(payload["amount_monthly"]),
+    freq = payload.get("frequency") or "monthly"
+    if freq not in analytics.FREQUENCY_MONTHS:
+        raise HTTPException(400, "bad frequency %r" % freq)
+    # accept either the per-payment amount or a legacy monthly figure
+    amount = payload.get("amount")
+    if amount is None:
+        amount = payload.get("amount_monthly", 0)
+    amount = float(amount)
+    r = RecurringOutflow(
+        name=payload["name"], kind=kind, amount=amount, frequency=freq,
+        amount_monthly=analytics.to_monthly(amount, freq),
         counts_as_investment=1 if payload.get("counts_as_investment",
-                                              kind == "sip") else 0))
+                                              kind == "sip") else 0)
+    s.add(r)
     s.commit()
+    out = service.recurring_to_dict(r)
     s.close()
-    return {"ok": True}
+    return out
 
 
 @app.put("/api/recurring/{rid}")
@@ -459,14 +467,25 @@ def update_recurring(rid: int, payload: dict = Body(...)):
     r = s.get(RecurringOutflow, rid)
     if not r:
         raise HTTPException(404, "not found")
-    for f in ("name", "kind", "amount_monthly"):
+    for f in ("name", "kind"):
         if f in payload and payload[f] is not None:
             setattr(r, f, payload[f])
+    if payload.get("frequency"):
+        if payload["frequency"] not in analytics.FREQUENCY_MONTHS:
+            raise HTTPException(400, "bad frequency %r" % payload["frequency"])
+        r.frequency = payload["frequency"]
+    if payload.get("amount") is not None:
+        r.amount = float(payload["amount"])
+    elif payload.get("amount_monthly") is not None:
+        r.amount = analytics.to_monthly(
+            float(payload["amount_monthly"]) * 12, "yearly")
+    r.amount_monthly = analytics.to_monthly(r.amount, r.frequency or "monthly")
     if "counts_as_investment" in payload:
         r.counts_as_investment = 1 if payload["counts_as_investment"] else 0
     s.commit()
+    out = service.recurring_to_dict(r)
     s.close()
-    return {"ok": True}
+    return out
 
 
 @app.delete("/api/recurring/{rid}")

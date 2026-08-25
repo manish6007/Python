@@ -85,8 +85,8 @@ export default function Cashflow({ summary, owners, reload }) {
   const [income, setIncome] = useState([])
   const [expenses, setExpenses] = useState([])
   const [rec, setRec] = useState([])
-  const [rf, setRf] = useState({ name: '', kind: 'sip',
-    amount_monthly: '', counts_as_investment: true })
+  const [rf, setRf] = useState({ name: '', kind: 'sip', amount: '',
+    frequency: 'monthly', counts_as_investment: true })
 
   const loadLists = async () => {
     const [i, e, r] = await Promise.all([
@@ -101,10 +101,12 @@ export default function Cashflow({ summary, owners, reload }) {
   const addRec = async (e) => {
     e.preventDefault()
     await api.post('/api/recurring', {
-      name: rf.name, kind: rf.kind, amount_monthly: +rf.amount_monthly,
+      name: rf.name, kind: rf.kind, amount: +rf.amount,
+      frequency: rf.frequency,
       counts_as_investment: rf.counts_as_investment,
     })
-    setRf({ name: '', kind: 'sip', amount_monthly: '', counts_as_investment: true })
+    setRf({ name: '', kind: 'sip', amount: '', frequency: 'monthly',
+      counts_as_investment: true })
     refresh()
   }
 
@@ -147,7 +149,7 @@ export default function Cashflow({ summary, owners, reload }) {
       )}
 
       <div className="card">
-        <h2>Committed monthly outflows (EMIs, SIPs, premiums)</h2>
+        <h2>Committed outflows (EMIs, SIPs, premiums, subscriptions, upkeep)</h2>
         <form className="row" onSubmit={addRec}>
           <label className="field">Name
             <input required value={rf.name} onChange={(e) => setRf({ ...rf, name: e.target.value })} /></label>
@@ -156,16 +158,27 @@ export default function Cashflow({ summary, owners, reload }) {
               ...rf, kind: e.target.value,
               counts_as_investment: ['sip', 'pf', 'nps'].includes(e.target.value),
             })}>
-              <option value="sip">SIP</option>
+              <option value="sip">SIP / savings plan</option>
               <option value="pf">PF / EPF contribution</option>
               <option value="nps">NPS contribution</option>
               <option value="emi">EMI</option>
               <option value="premium">Insurance premium</option>
+              <option value="subscription">Subscription</option>
+              <option value="maintenance">Maintenance / upkeep</option>
+              <option value="tax">Tax / statutory</option>
               <option value="other">Other</option>
             </select></label>
-          <label className="field">Amount / month
-            <input type="number" step="any" required value={rf.amount_monthly}
-              onChange={(e) => setRf({ ...rf, amount_monthly: e.target.value })} /></label>
+          <label className="field">Amount per payment
+            <input type="number" step="any" required value={rf.amount}
+              onChange={(e) => setRf({ ...rf, amount: e.target.value })} /></label>
+          <label className="field">Every
+            <select value={rf.frequency}
+              onChange={(e) => setRf({ ...rf, frequency: e.target.value })}>
+              <option value="monthly">Month</option>
+              <option value="quarterly">Quarter</option>
+              <option value="half_yearly">6 months</option>
+              <option value="yearly">Year</option>
+            </select></label>
           <label className="field">Treat as
             <select value={String(rf.counts_as_investment)}
               onChange={(e) => setRf({ ...rf, counts_as_investment: e.target.value === 'true' })}>
@@ -175,12 +188,20 @@ export default function Cashflow({ summary, owners, reload }) {
           <button className="btn" type="submit">Add</button>
         </form>
         <p className="small muted">
-          PF, NPS and ESOP contributions are savings, not spending — mark them as
-          investments so the surplus and savings rate stay honest.
+          Enter each cost the way it is actually billed — a ₹12,000 yearly
+          subscription or ₹9,000 quarterly maintenance — and it is spread into a
+          monthly equivalent so your surplus stays honest between the lumpy
+          months. PF, NPS and ESOP contributions are savings, not spending: mark
+          them as investments.
         </p>
         {rec.length > 0 && (
           <table className="data" style={{ marginTop: 10 }}>
-            <thead><tr><th>Name</th><th>Kind</th><th className="num">Monthly</th><th></th></tr></thead>
+            <thead><tr>
+              <th>Name</th><th>Kind</th><th>Every</th>
+              <th className="num">Per payment</th>
+              <th className="num">Per month</th>
+              <th className="num">Per year</th><th></th>
+            </tr></thead>
             <tbody>{rec.map((r) => (
               <tr key={r.id}>
                 <td>{r.name}</td>
@@ -196,11 +217,30 @@ export default function Cashflow({ summary, owners, reload }) {
                     {r.counts_as_investment ? '· investment ⇄' : '· expense ⇄'}
                   </button>
                 </td>
+                <td className="small">{r.frequency_label}</td>
+                <td className="num">{inr(r.amount)}</td>
                 <td className="num">{inr(r.amount_monthly)}</td>
+                <td className="num muted">{inr(r.amount_annual)}</td>
                 <td><button className="icon" onClick={async () => { await api.del('/api/recurring/' + r.id); refresh() }}>🗑</button></td>
               </tr>
             ))}</tbody>
+            <tfoot><tr>
+              <td colSpan={4}><b>Total</b></td>
+              <td className="num"><b>
+                {inr(rec.reduce((a, r) => a + r.amount_monthly, 0))}
+              </b></td>
+              <td className="num"><b>
+                {inr(rec.reduce((a, r) => a + (r.amount_annual || 0), 0))}
+              </b></td>
+              <td></td>
+            </tr></tfoot>
           </table>
+        )}
+        {rec.some((r) => r.frequency !== 'monthly') && (
+          <p className="small muted">
+            Non-monthly items are spread evenly above. The cash still leaves in
+            one lump on its due month — keep that in your buffer.
+          </p>
         )}
       </div>
 

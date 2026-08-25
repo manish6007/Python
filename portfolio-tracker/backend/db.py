@@ -121,13 +121,21 @@ class ExpenseEntry(Base):
 
 
 class RecurringOutflow(Base):
-    """Committed monthly outflows: EMIs, SIPs, insurance premiums."""
+    """A committed outflow: EMIs, SIPs, premiums, subscriptions, maintenance.
+
+    `amount` is what leaves the account on each payment and `frequency` says
+    how often, so a 12,000/year subscription is entered as it is actually
+    billed. `amount_monthly` is the derived monthly equivalent, written on
+    save and used by every downstream calculation.
+    """
     __tablename__ = "recurring_outflows"
     id = Column(Integer, primary_key=True)
     name = Column(String, nullable=False)
-    kind = Column(String, default="sip")  # emi/sip/premium/other
-    amount_monthly = Column(Float, nullable=False)
-    counts_as_investment = Column(Integer, default=0)  # SIPs are savings, not spend
+    kind = Column(String, default="sip")
+    amount = Column(Float, default=0.0)          # per payment, as billed
+    frequency = Column(String, default="monthly")
+    amount_monthly = Column(Float, nullable=False)   # derived from the two above
+    counts_as_investment = Column(Integer, default=0)  # savings, not spend
 
 
 class Loan(Base):
@@ -165,11 +173,37 @@ _engine = None
 _SessionFactory = None
 
 
+def _migrate(engine):
+    """Add columns introduced after a database was first created.
+
+    SQLite cannot express these through create_all, and silently running
+    against a stale schema would break inserts, so add what is missing and
+    backfill it from the old values.
+    """
+    from sqlalchemy import text
+    with engine.begin() as conn:
+        cols = {r[1] for r in conn.execute(
+            text("PRAGMA table_info(recurring_outflows)"))}
+        if not cols:
+            return
+        if "amount" not in cols:
+            conn.execute(text(
+                "ALTER TABLE recurring_outflows ADD COLUMN amount FLOAT"))
+            conn.execute(text(
+                "UPDATE recurring_outflows SET amount = amount_monthly"))
+        if "frequency" not in cols:
+            conn.execute(text("ALTER TABLE recurring_outflows "
+                              "ADD COLUMN frequency VARCHAR"))
+            conn.execute(text("UPDATE recurring_outflows "
+                              "SET frequency = 'monthly'"))
+
+
 def get_session():
     global _engine, _SessionFactory
     if _engine is None:
         _engine = create_engine(f"sqlite:///{DB_PATH}")
         Base.metadata.create_all(_engine)
+        _migrate(_engine)
         _SessionFactory = sessionmaker(bind=_engine)
     return _SessionFactory()
 

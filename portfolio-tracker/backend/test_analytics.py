@@ -206,3 +206,40 @@ def test_liquid_total_sums_only_reachable_money():
           {"asset_class": "fd", "avg_cost": 500000, "rate": 0,
            "start_date": today, "meta": {"maturity_date": "2032-01-01"}}]
     assert analytics.liquid_total(hs, today) == 500000
+
+
+def test_frequency_converts_to_monthly():
+    assert analytics.to_monthly(1200, "monthly") == 1200
+    assert analytics.to_monthly(1200, "quarterly") == 400
+    assert analytics.to_monthly(1200, "half_yearly") == 200
+    assert analytics.to_monthly(1200, "yearly") == 100
+
+
+def test_annual_cost_is_frequency_independent():
+    for freq, per_payment in (("monthly", 1000), ("quarterly", 3000),
+                              ("half_yearly", 6000), ("yearly", 12000)):
+        assert analytics.to_annual(per_payment, freq) == 12000
+
+
+def test_unknown_frequency_treated_as_monthly():
+    assert analytics.to_monthly(500, "fortnightly") == 500
+    assert analytics.to_monthly(500, None) == 500
+
+
+def test_lumpy_outflows_fold_into_the_monthly_surplus():
+    rec = [{"kind": "subscription", "counts_as_investment": False,
+            "amount_monthly": analytics.to_monthly(12000, "yearly")},
+           {"kind": "maintenance", "counts_as_investment": False,
+            "amount_monthly": analytics.to_monthly(9000, "quarterly")}]
+    cf = analytics.monthly_cashflow(100000, 0, 1, rec)
+    assert cf["other_committed_m"] == 1000 + 3000
+    assert cf["surplus_m"] == 100000 - 4000
+
+
+def test_no_entries_reports_zero_months_not_the_window():
+    """An empty ledger must say 'no entries', not 'average of 3 months'."""
+    cf = analytics.monthly_cashflow(287000, 0, 3, [], income_months=1,
+                                    expense_months=0)
+    assert cf["expense_months"] == 0
+    assert cf["expense_m"] == 0
+    assert cf["income_months"] == 1

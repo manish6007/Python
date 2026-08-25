@@ -209,6 +209,25 @@ def xirr(cashflows, guess=0.1):
     return (lo + hi) / 2
 
 
+# How many months one payment of each frequency covers. A quarterly bill is
+# not a monthly bill -- spreading it is the only way a monthly surplus means
+# anything.
+FREQUENCY_MONTHS = {"monthly": 1, "quarterly": 3, "half_yearly": 6,
+                    "yearly": 12}
+FREQUENCY_LABELS = {"monthly": "Monthly", "quarterly": "Quarterly",
+                    "half_yearly": "Half-yearly", "yearly": "Yearly"}
+
+
+def to_monthly(amount, frequency):
+    """Monthly-equivalent cost of a payment made every `frequency`."""
+    return float(amount or 0.0) / FREQUENCY_MONTHS.get(frequency, 1)
+
+
+def to_annual(amount, frequency):
+    """What this outflow actually costs over a year."""
+    return to_monthly(amount, frequency) * 12.0
+
+
 def monthly_cashflow(income_total, expense_total, months, recurring,
                      income_months=None, expense_months=None):
     """Average monthly picture and the investible surplus.
@@ -222,8 +241,12 @@ def monthly_cashflow(income_total, expense_total, months, recurring,
     amount_monthly, kind, counts_as_investment.
     """
     months = max(months, 1)
-    income_m = income_total / max(income_months or months, 1)
-    expense_m = expense_total / max(expense_months or months, 1)
+    # `is None` matters: zero entries is a real answer ("no data yet"), not a
+    # missing argument, and must not silently fall back to the window length.
+    income_div = months if income_months is None else income_months
+    expense_div = months if expense_months is None else expense_months
+    income_m = income_total / max(income_div, 1)
+    expense_m = expense_total / max(expense_div, 1)
     emi_m = sum(r["amount_monthly"] for r in recurring if r.get("kind") == "emi")
     committed_invest_m = sum(r["amount_monthly"] for r in recurring
                              if r.get("counts_as_investment"))
@@ -232,8 +255,8 @@ def monthly_cashflow(income_total, expense_total, months, recurring,
                             and not r.get("counts_as_investment"))
     surplus = income_m - expense_m - emi_m - other_committed_m - committed_invest_m
     return {"income_m": income_m, "expense_m": expense_m, "emi_m": emi_m,
-            "income_months": max(income_months or months, 1),
-            "expense_months": max(expense_months or months, 1),
+            "income_months": income_div,
+            "expense_months": expense_div,
             "committed_invest_m": committed_invest_m,
             "other_committed_m": other_committed_m,
             "surplus_m": surplus,

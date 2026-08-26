@@ -48,6 +48,7 @@ const SECTIONS = [
           'The headings brokers use are recognised automatically; the guessed mapping is shown so you can correct anything wrong, and you confirm the rows before anything is saved.',
           'A CAMS/KFintech statement PDF brings in every mutual-fund folio at once — you need the password you chose when requesting it. Both the Consolidated Account Summary table and the detailed statement work.',
           'Scheme codes are looked up from each ISIN, so imported funds refresh their own NAVs afterwards without you hunting codes.',
+          'The detailed statement carries more: the nominee on each folio, and every transaction since you started — imported as real cashflows, which is what turns XIRR from an estimate into your actual money-weighted return. If a scheme opens with a balance the statement began mid-history, so its transactions are left out rather than producing a confident wrong number.',
           'The parsed totals are checked against the statement’s own Total row — if they disagree, you are told rather than quietly given a short portfolio.',
           'Importing adds new holdings; it does not update or de-duplicate existing ones.']],
       ['Prices',

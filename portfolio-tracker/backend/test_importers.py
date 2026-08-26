@@ -234,3 +234,91 @@ def test_amfi_dump_yields_an_isin_index():
     assert by_isin["INF846K01EW2"] == "120503"
     assert by_isin["INF846K01FA4"] == "120503"     # both ISIN columns indexed
     assert "N.A." not in by_isin
+
+
+# ---- CAS detailed statement (the layout registrars send today) -----------
+DETAILED = """Consolidated Account Statement
+01-Jan-2015 To 26-Aug-2026
+DSP Mutual Fund
+Folio No: 4274832 / 68
+PAN: ABCDE1234F KYC: OK PAN: OK
+D782-DSP Mid Cap Fund - Direct Plan - Growth (formerly DSP Small and Mid Cap \
+Fund) (Non-Demat) - ISIN: INF740K01PX1(Advisor: DIRECT) Registrar : CAMS
+Nominee 1: RAJENDRA PRASAD Nominee 2: Nominee 3:
+Opening Unit Balance: 0.000
+Date Transaction Amount (INR) Units Price (INR) Unit Balance
+05-Jan-2021 Systematic Investment Purchase 12,500.00 218.417 57.2300 218.417
+*** Stamp Duty *** 0.63
+05-Feb-2021 Systematic Investment Purchase 12,500.00 205.213 60.9128 423.630
+15-Mar-2023 Redemption (5,000.00) (60.000) 83.3333 363.630
+Closing Unit Balance: 7,763.079 NAV on 25-Aug-2026: INR 112.6609
+Total Cost Value: 5,37,500.00 Market Value on 25-Aug-2026: INR 8,74,595.47
+D783-DSP Liquid Fund - Direct Plan - Growth (Non-Demat) - ISIN: \
+INF740K01QT7(Advisor: DIRECT) Registrar : CAMS
+Nominee 1: RAJENDRA PRASAD Nominee 2: Nominee 3:
+Opening Unit Balance: 0.000
+Date Transaction Amount (INR) Units Price (INR) Unit Balance
+01-Jun-2024 Purchase 50,000.00 15.000 3,333.3333 15.000
+Closing Unit Balance: 15.000 NAV on 25-Aug-2026: INR 3,600.0000
+Total Cost Value: 50,000.00 Market Value on 25-Aug-2026: INR 54,000.00
+"""
+
+
+def test_detailed_cas_reads_the_closing_line():
+    rows, notes, layout = imp.parse_cas_any(DETAILED, owner="Me")
+    assert layout == "detailed" and notes == []
+    a = rows[0]
+    assert a["identifier"] == "4274832 / 68"
+    assert a["isin"] == "INF740K01PX1"
+    assert a["units"] == 7763.079
+    assert a["last_price"] == 112.6609            # "NAV on <date>: INR ..."
+    assert a["invested"] == 537500.0
+    assert a["current_value"] == 874595.47        # "Market Value on ...", not
+    assert a["registrar"] == "CAMS"               # "Valuation on"
+    assert a["name"].startswith("DSP Mid Cap Fund - Direct Plan - Growth")
+
+
+def test_detailed_cas_splits_schemes_sharing_one_folio():
+    rows, _, _ = imp.parse_cas_any(DETAILED, owner="Me")
+    assert len(rows) == 2
+    assert [r["identifier"] for r in rows] == ["4274832 / 68"] * 2
+    assert rows[1]["name"].startswith("DSP Liquid Fund")
+    assert rows[1]["units"] == 15.0
+
+
+def test_detailed_cas_reads_the_nominee_without_the_next_label():
+    rows, _, _ = imp.parse_cas_any(DETAILED, owner="Me")
+    assert rows[0]["nominee"] == "RAJENDRA PRASAD"
+
+
+def test_detailed_cas_reads_transactions_but_not_stamp_duty():
+    rows, _, _ = imp.parse_cas_any(DETAILED, owner="Me")
+    txns = rows[0]["transactions"]
+    assert [t["type"] for t in txns] == ["buy", "buy", "sell"]
+    assert txns[0] == {"date": "2021-01-05", "type": "buy",
+                       "amount": 12500.0, "units": 218.417}
+    assert txns[2]["amount"] == 5000.0            # parentheses, not negative
+
+
+def test_detailed_cas_drops_a_truncated_transaction_history():
+    """An opening balance means the statement starts mid-history."""
+    text = DETAILED.replace("Opening Unit Balance: 0.000",
+                            "Opening Unit Balance: 500.000", 1)
+    rows, notes, _ = imp.parse_cas_any(text, owner="Me")
+    assert rows[0]["transactions"] == []
+    assert any("incomplete" in n for n in notes)
+    assert rows[0]["units"] == 7763.079           # the holding still imports
+
+
+def test_a_detailed_statement_is_not_read_as_a_summary():
+    """Its transaction rows carry ISINs and decimals; the summary parser
+    would read them as holdings and return confident nonsense."""
+    assert imp.is_detailed_cas(DETAILED)
+    rows, _, layout = imp.parse_cas_any(DETAILED)
+    assert layout == "detailed"
+    assert all(r["units"] > 0 and r["invested"] > 0 for r in rows)
+
+
+def test_summary_is_still_read_as_a_summary():
+    _, _, layout = imp.parse_cas_any(SUMMARY)
+    assert layout == "summary"

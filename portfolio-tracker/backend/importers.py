@@ -226,18 +226,37 @@ def build_rows(records, mapping, asset_class="stock", owner="Me"):
 
 # --------------------------------------------------------------------------
 # CAMS / KFintech consolidated account statement
+#
+# Registrars issue two of these and people request whichever they find:
+#
+# * the **Consolidated Account Summary** -- one table row per folio, ending in
+#   cost / units / NAV / market value;
+# * the **detailed statement** -- a block per scheme carrying the folio, the
+#   nominees, every transaction since inception and a closing line.
+#
+# Both are parsed here, anchored on the ISIN: it appears exactly once per
+# holding and is the only field neither layout wraps or abbreviates.
 # --------------------------------------------------------------------------
-FOLIO_RE = re.compile(r"Folio\s*No[:.\s]*([0-9][\w/\- ]{2,25})", re.I)
-CLOSING_RE = re.compile(r"Closing\s*Unit\s*Balance[:.\s]*([\d,]+\.?\d*)", re.I)
-NAV_RE = re.compile(r"NAV\s*on\s*[\d\-A-Za-z]+[:.\s]*(?:INR|Rs\.?)?\s*"
-                    r"([\d,]+\.?\d*)", re.I)
-VALUATION_RE = re.compile(r"Valuation\s*on\s*[\d\-A-Za-z]+[:.\s]*"
-                          r"(?:INR|Rs\.?)?\s*([\d,]+\.?\d*)", re.I)
-COST_RE = re.compile(r"Total\s*Cost\s*Value[:.\s]*(?:INR|Rs\.?)?\s*"
-                     r"([\d,]+\.?\d*)", re.I)
-ISIN_RE = re.compile(r"\b(IN[A-Z0-9]{10})\b")
-SCHEME_RE = re.compile(r"^\s*([A-Z0-9]{2,10})\s*[-–]\s*(.{6,110}?)\s*"
-                       r"(?:\(|Registrar|ISIN|$)", re.M)
+
+# Indian ISINs are IN + E/F/9 + 9 more. A word boundary cannot be used at
+# the start: extracted text frequently glues the folio to the ISIN with no
+# space ("90722941761/0INF846K01EW2"), which silently dropped those rows.
+ISIN_TOKEN = re.compile(r"(?<![A-Z])IN[EF0-9][A-Z0-9]{9}(?![A-Z0-9])")
+DECIMAL_TOKEN = re.compile(r"\d[\d,]*\.\d+")
+NAV_DATE_TOKEN = re.compile(r"\d{2}-[A-Za-z]{3}-\d{4}")
+SCHEME_CODE_PREFIX = re.compile(r"^[A-Z0-9]{2,12}\s*[-–]\s*")
+REGISTRAR_TOKEN = re.compile(r"\b(CAMS|KFINTECH|KARVY)\b", re.I)
+
+
+def _clean_scheme(text):
+    text = re.sub(r"\s+", " ", text).strip(" -–:")
+    text = SCHEME_CODE_PREFIX.sub("", text)          # drop "128TSDGG - "
+    text = re.sub(r"\((?:Non[\s-]?Demat|Demat)\)", "", text, flags=re.I)
+    text = re.sub(r"\(\s*Advisor\s*:[^)]*\)", "", text, flags=re.I)
+    text = re.sub(r"\bISIN\b\s*:?\s*", "", text, flags=re.I)
+    text = re.sub(r"\bRegistrar\b\s*:?\s*(?:CAMS|KFINTECH|KARVY)?", "", text,
+                  flags=re.I)
+    return re.sub(r"\s+", " ", text).strip(" -–:,")
 
 
 def extract_cas_text(pdf_bytes, password=""):
@@ -256,60 +275,224 @@ def extract_cas_text(pdf_bytes, password=""):
     return "\n".join((p.extract_text() or "") for p in reader.pages)
 
 
+# --------------------------------------------------------------------------
+# The detailed statement
+#
+# One block per scheme, in this shape:
+#
+#     DSP Mutual Fund
+#     Folio No: 4274832 / 68
+#     D782-DSP Mid Cap Fund - Direct Plan - Growth (Non-Demat) -
+#         ISIN: INF740K01PX1(Advisor: DIRECT)   Registrar : CAMS
+#     Nominee 1: <name>   Nominee 2:   Nominee 3:
+#     Opening Unit Balance: 0.000
+#     Date  Transaction  Amount(INR)  Units  Price(INR)  Unit Balance
+#     ... transaction rows, plus "*** Stamp Duty ***" lines ...
+#     Closing Unit Balance: 7,763.079  NAV on 25-Aug-2026: INR 112.6609
+#     Total Cost Value: 5,37,500.00  Market Value on 25-Aug-2026: INR 8,74,595.47
+#
+# One folio can carry several schemes, so blocks are cut at the ISIN and the
+# folio is carried down from the header above it -- cutting at "Folio No"
+# would collapse every scheme in a folio into one row.
+# --------------------------------------------------------------------------
+FOLIO_RE = re.compile(r"Folio\s*No[:.\s]*([0-9][\w/\- ]{2,25})", re.I)
+CLOSING_RE = re.compile(r"Closing\s*Unit\s*Balance[:.\s]*([\d,]+\.?\d*)", re.I)
+OPENING_RE = re.compile(r"Opening\s*Unit\s*Balance[:.\s]*([\d,]+\.?\d*)", re.I)
+NAV_RE = re.compile(r"NAV\s*on\s*[\d\-A-Za-z]+[:.\s]*(?:INR|Rs\.?)?\s*"
+                    r"([\d,]+\.?\d*)", re.I)
+# The statements registrars send today say "Market Value on <date>"; older
+# CAMS layouts say "Valuation on". Reading only the latter left every
+# detailed statement with no market value at all.
+VALUE_ON_RE = re.compile(r"(?:Market\s*Value|Valuation)\s*on\s*"
+                         r"[\d\-A-Za-z]+[:.\s]*(?:INR|Rs\.?)?\s*"
+                         r"([\d,]+\.?\d*)", re.I)
+COST_RE = re.compile(r"Total\s*Cost\s*Value[:.\s]*(?:INR|Rs\.?)?\s*"
+                     r"([\d,]+\.?\d*)", re.I)
+# The three nominee slots print on one line, empty ones included
+# ("Nominee 1: SEEMA  Nominee 2:   Nominee 3:"), so the first name has to be
+# cut at the next label rather than at the end of the line.
+# "HDFCFC-HDFC Flexi Cap Fund - Growth Plan". The date guard keeps a
+# transaction row ("01-Jun-2024 Purchase ...") from passing as a scheme.
+SCHEME_RE = re.compile(r"^\s*(?!\d{1,2}-)([A-Z0-9]{2,10})\s*[-–]\s*"
+                       r"(.{6,110}?)\s*(?:\(|Registrar|ISIN|$)", re.M)
+# Where one scheme's block ends and the next begins. The closing line is not
+# the end of a block: the cost and market value print after it.
+BLOCK_BOUNDARY = re.compile(r"Folio\s*No|Opening\s*Unit\s*Balance", re.I)
+NOMINEE_RE = re.compile(r"Nominee\s*1\s*[:.]\s*([A-Za-z][A-Za-z .'’-]{2,60}?)"
+                        r"\s*(?=Nominee\s*\d|$)", re.I | re.M)
+DETAILED_MARKER = re.compile(r"(Opening|Closing)\s*Unit\s*Balance", re.I)
+
+# A transaction row: date, description, amount, units, price, unit balance.
+# Redemptions print in parentheses or with a minus; the stamp-duty lines
+# carry no date and so cannot be mistaken for one.
+TXN_RE = re.compile(
+    r"^\s*(\d{2}-[A-Za-z]{3}-\d{4})\s+(.+?)\s+"
+    r"\(?(-?[\d,]+\.\d{2})\)?\s+"
+    r"\(?(-?[\d,]+\.\d{2,4})\)?\s+"
+    r"([\d,]+\.\d{2,4})\s+"
+    r"([\d,]+\.\d{2,4})\s*$")
+MONTHS = {m: i + 1 for i, m in enumerate(
+    ["jan", "feb", "mar", "apr", "may", "jun",
+     "jul", "aug", "sep", "oct", "nov", "dec"])}
+
+
+def _cas_date(token):
+    """'25-Aug-2026' -> '2026-08-25'; '' when the month is not a month."""
+    d, m, y = token.split("-")
+    month = MONTHS.get(m.lower()[:3])
+    return "%s-%02d-%02d" % (y, month, int(d)) if month else ""
+
+
+def _txn_type(description):
+    text = description.lower()
+    if "stamp" in text or "tax" in text:
+        return ""                       # a deduction, not a cashflow of yours
+    if any(w in text for w in ("redemption", "switch out", "switch-out",
+                               "sell", "withdrawal", "swo")):
+        return "sell"
+    if "idcw" in text or "dividend" in text:
+        return "dividend"
+    if "purchase" in text or "switch in" in text or "sip" in text \
+            or "investment" in text or "systematic" in text:
+        return "buy"
+    return ""
+
+
+def parse_cas_transactions(block):
+    """Transaction rows inside one scheme block of a detailed statement.
+
+    These are what makes a real XIRR possible, so they are read whenever the
+    statement carries them; a row that does not parse cleanly is left out
+    rather than guessed at, and the totals check still guards the holding.
+    """
+    out = []
+    for line in block.splitlines():
+        m = TXN_RE.match(line)
+        if not m:
+            continue
+        iso = _cas_date(m.group(1))
+        kind = _txn_type(m.group(2))
+        if not iso or not kind:
+            continue
+        amount = to_number(m.group(3))
+        units = to_number(m.group(4))
+        if not amount:
+            continue
+        out.append({"date": iso, "type": kind,
+                    "amount": round(abs(amount), 2),
+                    "units": round(abs(units or 0), 4)})
+    return out
+
+
+def _scheme_blocks(lines):
+    """(start, end) line spans, one per scheme, each holding a closing line.
+
+    Cutting at the closing balance alone would strand the cost and market
+    value that print underneath it; cutting at "Folio No" alone would
+    collapse the several schemes a single folio can hold into one row. So
+    each block runs to the first folio, scheme or opening-balance line
+    *after* its closing line.
+    """
+    closings = [i for i, ln in enumerate(lines) if CLOSING_RE.search(ln)]
+    spans, start = [], 0
+    for c in closings:
+        end = next((j for j in range(c + 1, len(lines))
+                    if BLOCK_BOUNDARY.search(lines[j])
+                    or ISIN_TOKEN.search(lines[j])), len(lines))
+        spans.append((start, end))
+        start = end
+    return spans
+
+
 def parse_cas(text, owner="Me"):
-    """Holdings from CAS text.
+    """Holdings from a detailed CAS.
 
     Statements differ between registrars and change format, so this reports
     what it could not read instead of guessing. Every row is shown for
     confirmation before anything is imported.
     """
+    lines = (text or "").splitlines()
     rows, notes = [], []
-    blocks = re.split(r"(?=Folio\s*No)", text, flags=re.I)
-    for block in blocks:
-        folio_m = FOLIO_RE.search(block)
-        if not folio_m:
-            continue
+    for start, end in _scheme_blocks(lines):
+        block = "\n".join(lines[start:end])
         units_m = CLOSING_RE.search(block)
-        if not units_m:
-            continue
         units = to_number(units_m.group(1))
         if not units or units <= 0:
             continue                      # closed folio, nothing held
-        scheme_m = SCHEME_RE.search(block)
-        name = (scheme_m.group(2).strip() if scheme_m
-                else "Scheme (name not read)")
-        nav = to_number(NAV_RE.search(block).group(1)) if NAV_RE.search(block) else None
-        val = (to_number(VALUATION_RE.search(block).group(1))
-               if VALUATION_RE.search(block) else None)
-        cost = (to_number(COST_RE.search(block).group(1))
-                if COST_RE.search(block) else None)
-        isin = ISIN_RE.search(block)
-        if not nav and val and units:
+
+        # One folio can hold several schemes and the header prints only
+        # once, so take the nearest folio at or above this block's end.
+        folio = ""
+        for j in range(end - 1, -1, -1):
+            folio_m = FOLIO_RE.search(lines[j])
+            if folio_m:
+                folio = folio_m.group(1).strip()
+                break
+
+        isin_m = ISIN_TOKEN.search(block)
+        isin = isin_m.group(0) if isin_m else ""
+        nav_m, val_m, cost_m = (NAV_RE.search(block), VALUE_ON_RE.search(block),
+                                COST_RE.search(block))
+        nav = to_number(nav_m.group(1)) if nav_m else None
+        val = to_number(val_m.group(1)) if val_m else None
+        cost = to_number(cost_m.group(1)) if cost_m else None
+        if not nav and val:
             nav = val / units
-        if not name or name.startswith("Scheme ("):
-            notes.append("A folio's scheme name could not be read — set it "
-                         "by hand after importing.")
+
+        # The name sits left of the ISIN on the scheme line. Older layouts
+        # print the ISIN on a line of its own, so fall back to the
+        # "CODE-Scheme Name" line the block always carries.
+        scheme = ""
+        if isin_m:
+            line = next((ln for ln in block.splitlines()
+                         if ISIN_TOKEN.search(ln)), "")
+            scheme = _clean_scheme(line[:ISIN_TOKEN.search(line).start()])
+        if not scheme:
+            scheme_m = SCHEME_RE.search(block)
+            scheme = _clean_scheme(scheme_m.group(2)) if scheme_m else ""
+        if not scheme:
+            scheme = "Scheme (name not read)"
+            notes.append("A scheme name could not be read for folio %s — set "
+                         "it by hand after importing." % (folio or isin))
+        # Transactions are only worth keeping when the statement covers the
+        # whole life of the holding. An opening balance above zero means it
+        # starts mid-history, and an XIRR from a truncated set of flows would
+        # be confidently wrong rather than merely missing.
+        txns = parse_cas_transactions(block)
+        opening_m = OPENING_RE.search(block)
+        opening = to_number(opening_m.group(1)) if opening_m else None
+        if txns and opening:
+            txns = []
+            notes.append("The statement starts after you first invested in "
+                         "some schemes (they open with a balance), so their "
+                         "transaction history is incomplete and was not "
+                         "imported. Request a CAS from an earlier date if you "
+                         "want XIRR on those.")
+        nominee_m = NOMINEE_RE.search(block)
+        registrar_m = REGISTRAR_TOKEN.search(block)
+        date_m = NAV_DATE_TOKEN.search(block[units_m.end():])
         rows.append({
             "owner": owner, "asset_class": "mutual_fund",
-            "name": name[:120],
-            "identifier": folio_m.group(1).strip()[:60],
-            "isin": isin.group(1) if isin else "",
+            "name": scheme[:120], "identifier": folio[:60], "isin": isin,
             "units": round(units, 4),
             "avg_cost": round(cost / units, 4) if cost and units else 0.0,
             "last_price": round(nav or 0.0, 4),
             "invested": round(cost or 0.0, 2),
             "current_value": round(val or (units * (nav or 0)), 2),
+            "nav_date": date_m.group(0) if date_m else "",
+            "registrar": registrar_m.group(1).upper() if registrar_m else "",
+            "nominee": nominee_m.group(1).strip() if nominee_m else "",
+            "transactions": txns,
             "purchase_date": "",
         })
     if not rows:
-        notes.append("No folios with a closing balance were found. If this is "
-                     "a summary-only statement, request the detailed one; "
-                     "otherwise the format may have changed — the CSV route "
-                     "still works.")
+        notes.append("No schemes with a closing balance were found — the "
+                     "format may have changed. The broker CSV route still "
+                     "works.")
     return rows, sorted(set(notes))
 
 # --------------------------------------------------------------------------
-# CAS "Consolidated Account Summary" -- the table format
+# The Consolidated Account Summary -- the table format
 #
 # Columns: Folio No. | ISIN | Scheme Name | Cost Value | Unit Balance |
 #          NAV Date | NAV | Market Value | Registrar
@@ -321,23 +504,6 @@ def parse_cas(text, owner="Me"):
 # ("NASDAQ 100", "Nifty 50", the registrar's "128TSDGG" prefix) do not, which
 # is what makes the four numbers at the end of a row safe to read positionally.
 # --------------------------------------------------------------------------
-
-
-# Indian ISINs are IN + E/F/9 + 9 more. A word boundary cannot be used at
-# the start: extracted text frequently glues the folio to the ISIN with no
-# space ("90722941761/0INF846K01EW2"), which silently dropped those rows.
-ISIN_TOKEN = re.compile(r"(?<![A-Z])IN[EF0-9][A-Z0-9]{9}(?![A-Z0-9])")
-DECIMAL_TOKEN = re.compile(r"\d[\d,]*\.\d+")
-NAV_DATE_TOKEN = re.compile(r"\d{2}-[A-Za-z]{3}-\d{4}")
-SCHEME_CODE_PREFIX = re.compile(r"^[A-Z0-9]{2,12}\s*[-\u2013]\s*")
-REGISTRAR_TOKEN = re.compile(r"\b(CAMS|KFINTECH|KARVY)\b", re.I)
-
-
-def _clean_scheme(text):
-    text = re.sub(r"\s+", " ", text).strip(" -\u2013:")
-    text = SCHEME_CODE_PREFIX.sub("", text)          # drop "128TSDGG - "
-    text = re.sub(r"\((?:Non[\s-]?Demat|Demat)\)", "", text, flags=re.I)
-    return re.sub(r"\s+", " ", text).strip(" -\u2013:,")
 
 
 def parse_cas_summary(text, owner="Me"):
@@ -387,6 +553,7 @@ def parse_cas_summary(text, owner="Me"):
             "current_value": round(market or (units * (nav or 0)), 2),
             "nav_date": date_m.group(0) if date_m else "",
             "registrar": registrar_m.group(1).upper() if registrar_m else "",
+            "nominee": "", "transactions": [],
             "purchase_date": "",
         })
     return rows, sorted(set(notes))
@@ -423,12 +590,29 @@ def _fmt(x):
     return "{:,.2f}".format(x or 0)
 
 
+def is_detailed_cas(text):
+    """True for the transaction-by-transaction layout.
+
+    The two layouts have to be told apart before parsing, not after: a
+    detailed statement carries ISINs and plenty of decimals, so the summary
+    parser will happily read a transaction row as a holding and return
+    confident nonsense. The opening/closing balance lines appear only in the
+    detailed layout.
+    """
+    return bool(DETAILED_MARKER.search(text or ""))
+
+
 def parse_cas_any(text, owner="Me"):
-    """Try the summary table first, then the detailed statement layout.
+    """Parse whichever of the two layouts arrived.
 
     CAMS and KFintech issue both; people request whichever they find, so the
-    importer should not care which arrived.
+    importer should not care which one it is handed.
     """
+    if is_detailed_cas(text):
+        rows, notes = parse_cas(text, owner=owner)
+        if rows:
+            return rows, sorted(set(notes + check_against_total(text, rows))), \
+                "detailed"
     rows, notes = parse_cas_summary(text, owner=owner)
     if rows:
         return rows, sorted(set(notes + check_against_total(text, rows))), \

@@ -54,6 +54,9 @@ export default function ImportWizard({ meta, owners, reload, onDone }) {
     })
     setBusy(false)
     setMsg(`Imported ${res.added} holdings.`
+      + (res.transactions
+        ? ` ${res.transactions} transactions came with them, so these holdings`
+          + ' now have a real XIRR.' : '')
       + (res.errors.length ? ' Problems: ' + res.errors.join('; ') : ''))
     setPreview(null); setFile(null)
     if (fileRef.current) fileRef.current.value = ''
@@ -63,6 +66,10 @@ export default function ImportWizard({ meta, owners, reload, onDone }) {
 
   const isPdf = (file?.name || '').toLowerCase().endsWith('.pdf')
   const isCas = preview?.source === 'cas'
+  // Only the detailed statement carries nominees and a transaction history.
+  const isDetailed = isCas && preview?.layout === 'detailed'
+  const txnTotal = isDetailed
+    ? preview.rows.reduce((a, r) => a + (r.transactions?.length || 0), 0) : 0
 
   return (
     <div className="card">
@@ -164,6 +171,8 @@ export default function ImportWizard({ meta, owners, reload, onDone }) {
                     <th>Name</th><th>Ticker / folio</th>
                     {isCas && <th>ISIN</th>}
                     {isCas && <th>AMFI code</th>}
+                    {isDetailed && <th>Nominee</th>}
+                    {isDetailed && <th className="num">Txns</th>}
                     <th className="num">Qty</th><th className="num">Avg cost</th>
                     <th className="num">Price</th><th className="num">Invested</th>
                     <th className="num">Value</th>
@@ -182,6 +191,17 @@ export default function ImportWizard({ meta, owners, reload, onDone }) {
                               </span>)}
                           </td>
                         )}
+                        {isDetailed && (
+                          <td className="small muted">{r.nominee || (
+                            <span style={{ color: 'var(--warning)' }}>
+                              none
+                            </span>)}</td>
+                        )}
+                        {isDetailed && (
+                          <td className="num small muted">
+                            {r.transactions?.length || 0}
+                          </td>
+                        )}
                         <td className="num">{r.units}</td>
                         <td className="num">{inr(r.avg_cost)}</td>
                         <td className="num">{inr(r.last_price)}</td>
@@ -191,7 +211,13 @@ export default function ImportWizard({ meta, owners, reload, onDone }) {
                     ))}
                   </tbody>
                   <tfoot><tr>
-                    <td colSpan={isCas ? 7 : 5}><b>Total</b></td>
+                    <td colSpan={isDetailed ? 9 : isCas ? 7 : 5}>
+                      <b>Total</b>
+                      {txnTotal > 0 && (
+                        <span className="small muted">
+                          {' '}· {txnTotal} transactions
+                        </span>)}
+                    </td>
                     <td className="num"><b>
                       {inr(preview.rows.reduce((a, r) => a + r.invested, 0))}
                     </b></td>

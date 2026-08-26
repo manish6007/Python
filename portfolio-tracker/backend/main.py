@@ -349,13 +349,35 @@ async def import_preview(file: UploadFile = File(...),
             "notes": notes, "asset_class": asset_class}
 
 
+def _add_import_txns(s, holding, rows):
+    """Store the transaction history a detailed CAS carries.
+
+    It is what turns XIRR from an estimate into the real money-weighted
+    return, so it is kept rather than thrown away after valuing the holding.
+    A row that does not carry a usable date is dropped, not guessed at.
+    """
+    kept = 0
+    for t in rows:
+        try:
+            when = date.fromisoformat((t.get("date") or "")[:10])
+        except ValueError:
+            continue
+        amount = float(t.get("amount") or 0)
+        if amount <= 0 or t.get("type") not in ("buy", "sell", "dividend"):
+            continue
+        s.add(Transaction(holding_id=holding.id, date=when, type=t["type"],
+                          amount=amount, units=float(t.get("units") or 0)))
+        kept += 1
+    return kept
+
+
 @app.post("/api/import/commit")
 def import_commit(payload: dict = Body(...)):
     """Create holdings from rows the user has just reviewed."""
     s = db()
     owners = {o.name: o.id for o in s.query(Owner).all()}
     default_owner = payload.get("owner") or s.query(Owner).first().name
-    added, errors = 0, []
+    added, txns, errors = 0, 0, []
     for i, r in enumerate(payload.get("rows") or []):
         try:
             oname = (r.get("owner") or default_owner).strip()
@@ -372,7 +394,7 @@ def import_commit(payload: dict = Body(...)):
                 meta["purchase_date"] = r["purchase_date"]
             if cls == "mutual_fund":
                 meta["category"] = r.get("category") or "equity"
-            for k in ("isin", "registrar"):
+            for k in ("isin", "registrar", "nominee"):
                 if r.get(k):
                     meta[k] = r[k]
             # The AMFI code is what prices a fund, so it wins the identifier
@@ -393,12 +415,14 @@ def import_commit(payload: dict = Body(...)):
             if not h.name:
                 raise ValueError("name required")
             s.add(h)
+            s.flush()                 # need the id to hang transactions off
+            txns += _add_import_txns(s, h, r.get("transactions") or [])
             added += 1
         except (ValueError, TypeError) as exc:
             errors.append("row %d: %s" % (i + 1, exc))
     s.commit()
     s.close()
-    return {"added": added, "errors": errors}
+    return {"added": added, "transactions": txns, "errors": errors}
 
 
 # ---------------- transactions (optional, powers XIRR) ----------------

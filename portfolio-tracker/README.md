@@ -43,6 +43,9 @@ registrars in one go — both the Consolidated Account Summary table and the
 detailed statement are understood, scheme codes are resolved from each ISIN so
 NAVs refresh by themselves afterwards, and the parsed totals are checked
 against the statement's own Total row so a partial read cannot pass silently.
+The detailed statement also carries each folio's nominee and its full
+transaction history, which are imported too — giving those holdings a real
+XIRR instead of an estimate.
 
 ### Understand your allocation
 Holdings roll up into buckets (equity, debt, gold, real estate, cash) which
@@ -291,10 +294,11 @@ nominee is often a trustee for the legal heirs rather than the owner.
 cd backend && python -m pytest -q
 ```
 
-94 tests covering the analytics, FI projection and family-record documents —
+121 tests covering the analytics, importers, FI projection and family-record
+documents —
 valuation, XIRR, cashflow averaging, allocation drift and presets, liquidity,
 reconciliation, amortisation, the FI accumulation and drawdown model, goal
-impact, insurance gaps, and AES-256 encryption round-trips.
+impact, insurance gaps, both CAS layouts, and AES-256 encryption round-trips.
 
 ```bash
 flake8 backend --max-line-length=127

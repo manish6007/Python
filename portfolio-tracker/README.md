@@ -32,7 +32,14 @@ gold bonds, gold ETFs, REITs/InvITs, fixed deposits, savings accounts, EPF,
 PPF, NPS and a catch-all — each tagged to a household member so you can see
 your holdings and your spouse's together or apart. Mutual-fund NAVs refresh
 from AMFI and stock prices from Yahoo, with a built-in AMFI scheme-code
-search. Bulk import via CSV.
+search.
+
+**Import instead of typing.** Upload a broker export exactly as it downloads —
+Zerodha, Groww, Upstox, Angel One, ICICI Direct and most others, CSV or XLSX.
+The column headings brokers use are recognised automatically, the guessed
+mapping is shown for you to correct, and you confirm the rows before anything
+is saved. A CAMS/KFintech consolidated account statement PDF brings in every
+mutual-fund folio across both registrars in one go.
 
 ### Understand your allocation
 Holdings roll up into buckets (equity, debt, gold, real estate, cash) which
@@ -120,9 +127,10 @@ The **ⓘ** button in the top bar opens this guide inside the app.
 3. **Settings → Planning inputs.** Emergency-fund target, savings float, and
    whether the salary you enter is **gross or net** — the most common reason a
    plan fails to reconcile.
-4. **Portfolio.** Add holdings, or download the CSV template and import them
-   in bulk. Give mutual funds their AMFI scheme code and stocks their NSE
-   ticker so prices refresh automatically.
+4. **Portfolio.** Import your broker's CSV or your CAS PDF rather than typing
+   — upload the file untouched and correct the mapping if anything was
+   guessed wrong. Give mutual funds their AMFI scheme code and stocks their
+   NSE ticker so prices refresh automatically.
 5. **Cashflow.** Add a month of income and expenses, then your committed
    outflows once.
 6. **Loans**, **Insurance** — add what applies.
@@ -295,8 +303,6 @@ flake8 backend --max-line-length=127
 
 Considered and deliberately deferred:
 
-- **CAS import** (CAMS/KFintech PDF) — would remove most manual MF entry.
-  The highest-value remaining feature.
 - **Tax module** — old vs new regime comparison, 80C/80D optimiser.
 - **Estate planning** — will drafting, document vault.
 - **Account Aggregator sync** — requires being a regulated FIU; not worth it

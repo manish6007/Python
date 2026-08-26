@@ -9,7 +9,8 @@ import json
 import os
 from datetime import date, datetime
 
-from fastapi import Body, FastAPI, HTTPException, Response, UploadFile
+from fastapi import (Body, FastAPI, File, Form, HTTPException, Response,
+                     UploadFile)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -17,6 +18,7 @@ import analytics
 import export as export_mod
 import family_record as fr_mod
 import fi as fi_mod
+import importers as imp_mod
 import pricing
 import service
 from db import (ASSET_CLASS_LABELS, ASSET_CLASSES, ExpenseEntry, Goal,
@@ -261,6 +263,108 @@ async def import_holdings(file: UploadFile):
             added += 1
         except (ValueError, TypeError, KeyError) as ex:
             errors.append("row %d: %s" % (i + 2, ex))
+    s.commit()
+    s.close()
+    return {"added": added, "errors": errors}
+
+
+# ---------------- guided import ----------------
+@app.get("/api/import/fields")
+def import_fields():
+    return {"mappable": imp_mod.MAPPABLE,
+            "aliases": {k: v[:6] for k, v in imp_mod.COLUMN_ALIASES.items()}}
+
+
+@app.post("/api/import/preview")
+async def import_preview(file: UploadFile = File(...),
+                         asset_class: str = Form("stock"),
+                         owner: str = Form("Me"),
+                         password: str = Form(""),
+                         mapping: str = Form("")):
+    """Read a broker export or a CAS and show what would be imported.
+
+    Nothing is written here. The caller confirms the rows (and can correct
+    the column mapping) before anything reaches the portfolio.
+    """
+    data = await file.read()
+    name = (file.filename or "").lower()
+    if name.endswith(".pdf"):
+        try:
+            text = imp_mod.extract_cas_text(data, password)
+        except PermissionError as exc:
+            raise HTTPException(401, str(exc))
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        rows, notes = imp_mod.parse_cas(text, owner=owner)
+        return {"source": "cas", "headers": [], "mapping": {},
+                "mappable": imp_mod.MAPPABLE, "rows": rows,
+                "skipped": [], "notes": notes,
+                "asset_class": "mutual_fund"}
+    try:
+        headers, records = imp_mod.read_table(data, name)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    if not headers:
+        raise HTTPException(400, "No readable rows in that file.")
+    if mapping:
+        try:
+            chosen = {k: v for k, v in json.loads(mapping).items() if v}
+        except ValueError:
+            raise HTTPException(400, "mapping must be JSON")
+    else:
+        chosen = imp_mod.sniff_columns(headers)
+    rows, skipped = imp_mod.build_rows(records, chosen,
+                                       asset_class=asset_class, owner=owner)
+    notes = []
+    unmapped = [f for f in ("units",) if f not in chosen]
+    if unmapped:
+        notes.append("No quantity column was recognised — pick it below, "
+                     "otherwise every row is skipped.")
+    if "avg_cost" not in chosen and "invested" not in chosen:
+        notes.append("Neither an average price nor an invested value was "
+                     "recognised, so cost and profit will read as zero.")
+    return {"source": "table", "headers": headers, "mapping": chosen,
+            "mappable": imp_mod.MAPPABLE, "rows": rows, "skipped": skipped,
+            "notes": notes, "asset_class": asset_class}
+
+
+@app.post("/api/import/commit")
+def import_commit(payload: dict = Body(...)):
+    """Create holdings from rows the user has just reviewed."""
+    s = db()
+    owners = {o.name: o.id for o in s.query(Owner).all()}
+    default_owner = payload.get("owner") or s.query(Owner).first().name
+    added, errors = 0, []
+    for i, r in enumerate(payload.get("rows") or []):
+        try:
+            oname = (r.get("owner") or default_owner).strip()
+            if oname not in owners:
+                o = Owner(name=oname)
+                s.add(o)
+                s.commit()
+                owners[oname] = o.id
+            cls = r.get("asset_class") or "stock"
+            if cls not in ASSET_CLASSES:
+                raise ValueError("bad asset_class %r" % cls)
+            meta = {}
+            if r.get("purchase_date"):
+                meta["purchase_date"] = r["purchase_date"]
+            if cls == "mutual_fund":
+                meta["category"] = r.get("category") or "equity"
+            h = Holding(owner_id=owners[oname], asset_class=cls,
+                        name=(r.get("name") or "").strip(),
+                        identifier=(r.get("identifier") or "").strip(),
+                        units=float(r.get("units") or 0),
+                        avg_cost=float(r.get("avg_cost") or 0),
+                        last_price=float(r.get("last_price") or 0),
+                        price_date=date.today(), value_date=date.today(),
+                        meta=json.dumps(meta))
+            if not h.name:
+                raise ValueError("name required")
+            s.add(h)
+            added += 1
+        except (ValueError, TypeError) as exc:
+            errors.append("row %d: %s" % (i + 1, exc))
     s.commit()
     s.close()
     return {"added": added, "errors": errors}

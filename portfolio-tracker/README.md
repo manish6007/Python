@@ -377,10 +377,15 @@ cd backend && pytest        # settings live in backend/pyproject.toml
 flake8 .                    # settings live in backend/.flake8
 ```
 
+The API is typed: request bodies are Pydantic models in `backend/schemas.py`,
+so a bad value is a 422 with a readable sentence rather than a 500, a
+misspelled field is rejected instead of silently ignored, and
+<http://localhost:8000/docs> describes every request body properly.
+
 CI runs both, plus a frontend build, on every push touching
 `portfolio-tracker/` — see `.github/workflows/portfolio-tracker.yml`.
 
-188 tests. The pure analytics and FI modules, the importers, profiles,
+199 tests. The pure analytics and FI modules, the importers, profiles,
 privacy — and `test_api.py`, which goes through HTTP rather than around it,
 because the host check, the CORS configuration, profile selection from the
 cookie and the session lifecycle only exist on the request path.

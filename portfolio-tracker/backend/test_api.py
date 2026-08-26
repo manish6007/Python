@@ -154,12 +154,43 @@ def test_a_404_does_not_leak_a_session(client):
 def test_a_bad_asset_class_is_refused(client):
     r = client.post("/api/holdings", json={"asset_class": "crypto",
                                            "name": "X"})
-    assert r.status_code == 400
+    assert r.status_code == 422
+    assert "asset_class must be one of" in r.json()["detail"]
+
+
+def test_a_misspelled_field_is_an_error_not_a_silent_no_op(client):
+    """`payload.get("assetClass")` used to just return None."""
+    r = client.post("/api/holdings", json={"asset_class": "stock",
+                                           "name": "X", "assetClass": "y"})
+    assert r.status_code == 422
+    assert "assetClass" in r.json()["detail"]
+
+
+def test_a_validation_error_reads_as_a_sentence(client):
+    """The UI shows `detail` verbatim; a list of error objects is noise."""
+    r = client.post("/api/holdings", json={"asset_class": "stock",
+                                           "name": "X", "units": "lots"})
+    assert isinstance(r.json()["detail"], str)
+    assert r.json()["detail"].startswith("units: ")
+
+
+def test_a_negative_quantity_is_refused(client):
+    r = client.post("/api/holdings", json={"asset_class": "stock",
+                                           "name": "X", "units": -5})
+    assert r.status_code == 422
 
 
 def test_a_holding_needs_a_name(client):
-    assert client.post("/api/holdings",
-                       json={"asset_class": "stock"}).status_code == 400
+    r = client.post("/api/holdings", json={"asset_class": "stock"})
+    assert r.status_code == 422
+    assert "name" in r.json()["detail"]
+
+
+def test_a_missing_amount_is_a_422_not_a_500(client):
+    """float(payload["amount"]) used to raise KeyError -> 500."""
+    r = client.post("/api/income", json={"category": "Salary"})
+    assert r.status_code == 422
+    assert "amount" in r.json()["detail"]
 
 
 # ---- the privacy claims, over HTTP --------------------------------------
@@ -207,3 +238,84 @@ def test_the_dashboard_summary_matches_the_holdings_list(client):
     assert len(summary["holdings"]) == len(listed) == 2
     assert round(sum(h["current_value"] for h in listed), 2) == \
         summary["total_assets"]
+
+
+# ---- partial updates must stay partial ----------------------------------
+def test_a_put_touches_only_the_fields_it_was_sent(client):
+    """exclude_unset is what keeps "absent" different from "sent as null"."""
+    h = client.post("/api/holdings", json={
+        "asset_class": "mutual_fund", "name": "Fund", "identifier": "120503",
+        "units": 100, "avg_cost": 50,
+        "meta": {"category": "equity", "nominee": "Spouse"}}).json()
+
+    client.put("/api/holdings/%d" % h["id"], json={"last_price": 75})
+    after = client.get("/api/holdings").json()[0]
+    assert after["identifier"] == "120503"          # untouched
+    assert after["units"] == 100
+    assert after["meta"]["nominee"] == "Spouse"
+    assert after["current_value"] == 7500
+
+
+def test_meta_merges_rather_than_replacing(client):
+    h = client.post("/api/holdings", json={
+        "asset_class": "mutual_fund", "name": "Fund", "units": 1,
+        "avg_cost": 1, "meta": {"category": "hybrid"}}).json()
+    client.put("/api/holdings/%d" % h["id"],
+               json={"meta": {"nominee": "Spouse"}})
+    meta = client.get("/api/holdings").json()[0]["meta"]
+    assert meta["category"] == "hybrid" and meta["nominee"] == "Spouse"
+
+
+def test_a_recurring_cost_keeps_its_frequency_on_a_partial_update(client):
+    r = client.post("/api/recurring", json={
+        "name": "Insurance", "kind": "premium", "amount": 12000,
+        "frequency": "yearly"}).json()
+    assert r["amount_monthly"] == 1000
+    client.put("/api/recurring/%d" % r["id"], json={"name": "Car insurance"})
+    after = client.get("/api/recurring").json()[0]
+    assert after["frequency"] == "yearly" and after["amount_monthly"] == 1000
+
+
+def test_a_bad_frequency_is_refused(client):
+    r = client.post("/api/recurring", json={"name": "X", "amount": 100,
+                                            "frequency": "fortnightly"})
+    assert r.status_code == 422
+    assert "frequency" in r.json()["detail"]
+
+
+def test_settings_still_accept_the_whole_object_back(client):
+    """The UI sends read-only fields along with the editable ones."""
+    settings = client.get("/api/settings").json()
+    settings["age"] = "38"
+    assert client.put("/api/settings", json=settings).status_code == 200
+    assert client.get("/api/settings").json()["age"] == "38"
+
+
+def test_the_openapi_schema_describes_the_bodies(client):
+    """Every request body used to be documented as "object"."""
+    schema = client.get("/openapi.json").json()
+    body = (schema["paths"]["/api/holdings"]["post"]["requestBody"]
+            ["content"]["application/json"]["schema"])
+    ref = body.get("$ref", "")
+    assert ref.endswith("HoldingIn")
+    props = schema["components"]["schemas"]["HoldingIn"]["properties"]
+    assert "asset_class" in props and "units" in props
+
+
+def test_erase_all_data_really_erases_all_of_it(client):
+    """Policies and goals used to survive a wipe, orphaned against no owner."""
+    client.post("/api/holdings", json={"asset_class": "stock", "name": "S",
+                                       "units": 1, "avg_cost": 10})
+    client.post("/api/policies", json={"name": "Term", "kind": "term",
+                                       "sum_assured": 10000000,
+                                       "premium": 18000})
+    client.post("/api/goals", json={"name": "Car", "amount_today": 1200000,
+                                    "target_year": 5})
+    client.post("/api/loans", json={"name": "Home", "annual_rate": 8.5,
+                                    "principal_outstanding": 5000000})
+
+    assert client.post("/api/reset", json={"confirm": "ERASE"}).status_code == 200
+
+    for path in ("/api/holdings", "/api/policies", "/api/goals", "/api/loans"):
+        assert client.get(path).json() == [], path
+    assert client.get("/api/summary").json()["total_assets"] == 0

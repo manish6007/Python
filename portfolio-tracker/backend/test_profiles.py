@@ -12,6 +12,7 @@ import config
 import db
 import main
 import profiles as profiles_mod
+import schemas
 
 
 @pytest.fixture
@@ -43,13 +44,13 @@ def test_holdings_do_not_leak_between_profiles(store, monkeypatch):
     profiles_mod.create("Demo", demo=False)
 
     _use(monkeypatch, "default")
-    main.add_holding({"asset_class": "stock", "name": "My real stock",
-                      "units": 10, "avg_cost": 100})
+    main.add_holding(schemas.HoldingIn(
+        asset_class="stock", name="My real stock", units=10, avg_cost=100))
 
     _use(monkeypatch, "demo")
     assert main.list_holdings() == []              # nothing of yours is here
-    main.add_holding({"asset_class": "stock", "name": "Demo stock",
-                      "units": 1, "avg_cost": 5})
+    main.add_holding(schemas.HoldingIn(
+        asset_class="stock", name="Demo stock", units=1, avg_cost=5))
     assert [h["name"] for h in main.list_holdings()] == ["Demo stock"]
 
     _use(monkeypatch, "default")
@@ -59,7 +60,8 @@ def test_holdings_do_not_leak_between_profiles(store, monkeypatch):
 def test_settings_do_not_leak_between_profiles(store, monkeypatch):
     profiles_mod.create("Demo")
     _use(monkeypatch, "default")
-    main.put_settings({"targets": {"equity": 60, "debt": 30, "gold": 10}})
+    main.put_settings(schemas.SettingsIn(
+        targets={"equity": 60, "debt": 30, "gold": 10}))
     _use(monkeypatch, "demo")
     s = db.get_session(profiles_mod.path_for("demo"))
     assert db.get_setting(s, "targets", "") == ""
@@ -93,20 +95,20 @@ def test_the_first_profile_cannot_be_deleted(store):
 def test_deleting_needs_the_name_typed_back(store):
     profiles_mod.create("Demo")
     with pytest.raises(main.HTTPException):
-        main.delete_profile("demo", {"confirm": "something else"})
-    assert main.delete_profile("demo", {"confirm": "Demo"})["ok"]
+        main.delete_profile("demo", schemas.ConfirmIn(confirm="nope"))
+    assert main.delete_profile("demo", schemas.ConfirmIn(confirm="Demo"))["ok"]
     assert [p["id"] for p in profiles_mod.list_profiles()] == ["default"]
 
 
 def test_deleting_a_profile_takes_its_data_file(store, monkeypatch):
     profiles_mod.create("Demo")
     _use(monkeypatch, "demo")
-    main.add_holding({"asset_class": "stock", "name": "Demo stock",
-                      "units": 1, "avg_cost": 5})
+    main.add_holding(schemas.HoldingIn(
+        asset_class="stock", name="Demo stock", units=1, avg_cost=5))
     path = profiles_mod.path_for("demo")
     import os
     assert os.path.exists(path)
-    main.delete_profile("demo", {"confirm": "Demo"})
+    main.delete_profile("demo", schemas.ConfirmIn(confirm="Demo"))
     assert not os.path.exists(path)
 
 
@@ -124,7 +126,7 @@ def test_the_registry_survives_being_corrupted(store):
 
 
 def test_a_demo_profile_comes_seeded(store, monkeypatch):
-    main.create_profile({"name": "Demo", "demo": True})
+    main.create_profile(schemas.ProfileIn(name="Demo", demo=True))
     _use(monkeypatch, "demo")
     assert main.list_holdings()                    # the fake household is here
     _use(monkeypatch, "default")

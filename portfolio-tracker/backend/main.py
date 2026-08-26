@@ -9,8 +9,9 @@ import json
 import os
 from datetime import date, datetime
 
-from fastapi import (Body, FastAPI, File, Form, HTTPException, Response,
+from fastapi import (FastAPI, File, Form, HTTPException, Response,
                      UploadFile)
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -27,6 +28,7 @@ import importers as imp_mod
 import netlog
 import pricing
 import profiles as profiles_mod
+import schemas
 import service
 from db import (ASSET_CLASS_LABELS, ASSET_CLASSES, ExpenseEntry, Goal,
                 Holding,
@@ -55,6 +57,23 @@ if DEV:
                                       "http://127.0.0.1:5173"],
                        allow_credentials=True,
                        allow_methods=["*"], allow_headers=["*"])
+
+
+@app.exception_handler(RequestValidationError)
+async def _readable_validation_error(request, exc):
+    """One sentence per problem, instead of FastAPI's nested error objects.
+
+    The UI shows `detail` straight to the user, so a list of dicts would
+    reach them as noise. Field name plus what was wrong is enough to fix it.
+    """
+    parts = []
+    for err in exc.errors():
+        where = ".".join(str(p) for p in err["loc"]
+                         if p not in ("body", "query"))
+        msg = err["msg"].replace("Value error, ", "")
+        parts.append("%s: %s" % (where, msg) if where else msg)
+    return JSONResponse({"detail": "; ".join(parts)}, status_code=422)
+
 
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "[::1]", "::1"}
 WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
@@ -209,11 +228,9 @@ def list_owners():
 
 
 @app.post("/api/owners")
-def add_owner(payload: dict = Body(...)):
+def add_owner(body: schemas.OwnerIn):
     s = db()
-    name = (payload.get("name") or "").strip()
-    if not name:
-        raise HTTPException(400, "name required")
+    name = body.name
     if s.query(Owner).filter(Owner.name == name).first():
         raise HTTPException(409, "owner exists")
     o = Owner(name=name)
@@ -273,14 +290,11 @@ def list_holdings():
 
 
 @app.post("/api/holdings")
-def add_holding(payload: dict = Body(...)):
+def add_holding(body: schemas.HoldingIn):
     s = db()
-    if payload.get("asset_class") not in ASSET_CLASSES:
-        raise HTTPException(400, "bad asset_class")
-    if not (payload.get("name") or "").strip():
-        raise HTTPException(400, "name required")
-    h = Holding(owner_id=payload.get("owner_id") or s.query(Owner).first().id,
-                asset_class=payload["asset_class"], name=payload["name"])
+    payload = body.model_dump(exclude_unset=True)
+    h = Holding(owner_id=body.owner_id or s.query(Owner).first().id,
+                asset_class=body.asset_class, name=body.name)
     apply_holding_payload(h, payload)
     if not h.value_date:
         h.value_date = date.today()
@@ -295,8 +309,9 @@ def add_holding(payload: dict = Body(...)):
 
 
 @app.put("/api/holdings/{hid}")
-def update_holding(hid: int, payload: dict = Body(...)):
+def update_holding(hid: int, body: schemas.HoldingUpdate):
     s = db()
+    payload = body.model_dump(exclude_unset=True)
     h = s.get(Holding, hid)
     if not h:
         raise HTTPException(404, "not found")
@@ -492,13 +507,13 @@ def _add_import_txns(s, holding, rows):
 
 
 @app.post("/api/import/commit")
-def import_commit(payload: dict = Body(...)):
+def import_commit(body: schemas.ImportCommit):
     """Create holdings from rows the user has just reviewed."""
     s = db()
     owners = {o.name: o.id for o in s.query(Owner).all()}
-    default_owner = payload.get("owner") or s.query(Owner).first().name
+    default_owner = body.owner or s.query(Owner).first().name
     added, txns, errors = 0, 0, []
-    for i, r in enumerate(payload.get("rows") or []):
+    for i, r in enumerate(row.model_dump() for row in body.rows):
         try:
             oname = (r.get("owner") or default_owner).strip()
             if oname not in owners:
@@ -558,14 +573,12 @@ def list_txns(hid: int):
 
 
 @app.post("/api/holdings/{hid}/transactions")
-def add_txn(hid: int, payload: dict = Body(...)):
+def add_txn(hid: int, body: schemas.TransactionIn):
     s = db()
     if not s.get(Holding, hid):
         raise HTTPException(404, "holding not found")
-    t = Transaction(holding_id=hid, date=parse_date(payload["date"]),
-                    type=payload.get("type", "buy"),
-                    amount=float(payload["amount"]),
-                    units=float(payload.get("units") or 0))
+    t = Transaction(holding_id=hid, date=parse_date(body.date),
+                    type=body.type, amount=body.amount, units=body.units)
     s.add(t)
     s.commit()
     s.close()
@@ -688,13 +701,13 @@ def list_income():
 
 
 @app.post("/api/income")
-def add_income(payload: dict = Body(...)):
+def add_income(body: schemas.EntryIn):
     s = db()
-    s.add(IncomeEntry(owner_id=payload.get("owner_id") or s.query(Owner).first().id,
-                      date=parse_date(payload.get("date")) or date.today(),
-                      category=payload.get("category") or "Salary",
-                      amount=float(payload["amount"]),
-                      notes=payload.get("notes") or ""))
+    s.add(IncomeEntry(owner_id=body.owner_id or s.query(Owner).first().id,
+                      date=parse_date(body.date) or date.today(),
+                      category=body.category or "Salary",
+                      amount=body.amount,
+                      notes=body.notes or ""))
     s.commit()
     s.close()
     return {"ok": True}
@@ -720,14 +733,14 @@ def list_expenses():
 
 
 @app.post("/api/expenses")
-def add_expense(payload: dict = Body(...)):
+def add_expense(body: schemas.EntryIn):
     s = db()
-    s.add(ExpenseEntry(owner_id=payload.get("owner_id") or s.query(Owner).first().id,
-                       date=parse_date(payload.get("date")) or date.today(),
-                       category=payload.get("category") or "Household",
-                       amount=float(payload["amount"]),
-                       fixed=1 if payload.get("fixed") else 0,
-                       notes=payload.get("notes") or ""))
+    s.add(ExpenseEntry(owner_id=body.owner_id or s.query(Owner).first().id,
+                       date=parse_date(body.date) or date.today(),
+                       category=body.category or "Household",
+                       amount=body.amount,
+                       fixed=1 if body.fixed else 0,
+                       notes=body.notes or ""))
     s.commit()
     s.close()
     return {"ok": True}
@@ -754,23 +767,19 @@ def list_recurring():
 
 
 @app.post("/api/recurring")
-def add_recurring(payload: dict = Body(...)):
+def add_recurring(body: schemas.RecurringIn):
     s = db()
-    kind = payload.get("kind") or "sip"
-    freq = payload.get("frequency") or "monthly"
-    if freq not in analytics.FREQUENCY_MONTHS:
-        raise HTTPException(400, "bad frequency %r" % freq)
+    kind, freq = body.kind, body.frequency
     # accept either the per-payment amount or a legacy monthly figure
-    amount = payload.get("amount")
-    if amount is None:
-        amount = payload.get("amount_monthly", 0)
-    amount = float(amount)
+    amount = (body.amount if body.amount is not None
+              else body.amount_monthly * analytics.FREQUENCY_MONTHS[freq])
+    invests = (body.counts_as_investment if body.counts_as_investment
+               is not None else kind == "sip")
     r = RecurringOutflow(
-        name=payload["name"], kind=kind, amount=amount, frequency=freq,
-        next_due=parse_date(payload.get("next_due")),
+        name=body.name, kind=kind, amount=amount, frequency=freq,
+        next_due=parse_date(body.next_due),
         amount_monthly=analytics.to_monthly(amount, freq),
-        counts_as_investment=1 if payload.get("counts_as_investment",
-                                              kind == "sip") else 0)
+        counts_as_investment=1 if invests else 0)
     s.add(r)
     s.commit()
     out = service.recurring_to_dict(r)
@@ -779,8 +788,9 @@ def add_recurring(payload: dict = Body(...)):
 
 
 @app.put("/api/recurring/{rid}")
-def update_recurring(rid: int, payload: dict = Body(...)):
+def update_recurring(rid: int, body: schemas.RecurringUpdate):
     s = db()
+    payload = body.model_dump(exclude_unset=True)
     r = s.get(RecurringOutflow, rid)
     if not r:
         raise HTTPException(404, "not found")
@@ -832,15 +842,14 @@ def list_loans():
 
 
 @app.post("/api/loans")
-def add_loan(payload: dict = Body(...)):
+def add_loan(body: schemas.LoanIn):
     s = db()
-    loan = Loan(owner_id=payload.get("owner_id") or s.query(Owner).first().id,
-                name=payload["name"], kind=payload.get("kind") or "home",
-                principal_outstanding=float(payload["principal_outstanding"]),
-                annual_rate=float(payload["annual_rate"]),
-                emi=float(payload.get("emi") or 0),
-                tenure_months_remaining=int(payload.get("tenure_months_remaining") or 0),
-                notes=payload.get("notes") or "")
+    loan = Loan(owner_id=body.owner_id or s.query(Owner).first().id,
+                name=body.name, kind=body.kind,
+                principal_outstanding=body.principal_outstanding,
+                annual_rate=body.annual_rate, emi=body.emi,
+                tenure_months_remaining=body.tenure_months_remaining,
+                notes=body.notes or "")
     s.add(loan)
     s.commit()
     out = service.loan_to_dict(loan)
@@ -849,8 +858,9 @@ def add_loan(payload: dict = Body(...)):
 
 
 @app.put("/api/loans/{lid}")
-def update_loan(lid: int, payload: dict = Body(...)):
+def update_loan(lid: int, body: schemas.LoanUpdate):
     s = db()
+    payload = body.model_dump(exclude_unset=True)
     loan = s.get(Loan, lid)
     if not loan:
         raise HTTPException(404, "not found")
@@ -876,11 +886,10 @@ def delete_loan(lid: int):
 
 
 @app.post("/api/loans/prepay-vs-invest")
-def prepay_vs_invest(payload: dict = Body(...)):
+def prepay_vs_invest(body: schemas.PrepayIn):
     res = analytics.prepay_vs_invest(
-        float(payload["principal"]), float(payload["annual_rate"]),
-        float(payload["emi"]), float(payload["lumpsum"]),
-        float(payload.get("invest_return_pct") or 12.0))
+        body.principal, body.annual_rate, body.emi, body.lumpsum,
+        body.invest_return_pct)
     if res is None:
         raise HTTPException(400, "EMI does not cover the monthly interest")
     return {k: (round(v, 2) if isinstance(v, (int, float)) else v)
@@ -959,9 +968,11 @@ def get_settings():
 
 
 @app.put("/api/settings")
-def put_settings(payload: dict = Body(...)):
+def put_settings(body: schemas.SettingsIn):
     s = db()
-    if "targets" in payload:
+    payload = body.model_dump(exclude_unset=True)
+    payload.update(body.model_extra or {})
+    if "targets" in payload and payload["targets"] is not None:
         set_setting(s, "targets", json.dumps(payload["targets"]))
     for k in SETTING_KEYS:
         if k in payload:
@@ -983,25 +994,22 @@ def list_policies():
 
 
 @app.post("/api/policies")
-def add_policy(payload: dict = Body(...)):
+def add_policy(body: schemas.PolicyIn):
     s = db()
-    kind = payload.get("kind") or "term"
-    if kind not in POLICY_KINDS:
-        raise HTTPException(400, "bad kind %r" % kind)
-    freq = payload.get("frequency") or "yearly"
-    if freq not in analytics.FREQUENCY_MONTHS:
-        raise HTTPException(400, "bad frequency %r" % freq)
-    p = Policy(owner_id=payload.get("owner_id") or s.query(Owner).first().id,
-               kind=kind, insurer=payload.get("insurer") or "",
-               name=payload["name"],
-               policy_number=payload.get("policy_number") or "",
-               covered=payload.get("covered") or "",
-               sum_assured=float(payload.get("sum_assured") or 0),
-               premium=float(payload.get("premium") or 0), frequency=freq,
-               next_due=parse_date(payload.get("next_due")),
-               valid_till=parse_date(payload.get("valid_till")),
-               nominee=payload.get("nominee") or "",
-               notes=payload.get("notes") or "")
+    if body.kind not in POLICY_KINDS:
+        raise HTTPException(400, "kind must be one of: %s"
+                            % ", ".join(POLICY_KINDS))
+    if body.frequency not in analytics.FREQUENCY_MONTHS:
+        raise HTTPException(400, "bad frequency %r" % body.frequency)
+    p = Policy(owner_id=body.owner_id or s.query(Owner).first().id,
+               kind=body.kind, insurer=body.insurer or "", name=body.name,
+               policy_number=body.policy_number or "",
+               covered=body.covered or "",
+               sum_assured=body.sum_assured, premium=body.premium,
+               frequency=body.frequency,
+               next_due=parse_date(body.next_due),
+               valid_till=parse_date(body.valid_till),
+               nominee=body.nominee or "", notes=body.notes or "")
     s.add(p)
     s.commit()
     out = service.policy_to_dict(p)
@@ -1010,8 +1018,9 @@ def add_policy(payload: dict = Body(...)):
 
 
 @app.put("/api/policies/{pid}")
-def update_policy(pid: int, payload: dict = Body(...)):
+def update_policy(pid: int, body: schemas.PolicyUpdate):
     s = db()
+    payload = body.model_dump(exclude_unset=True)
     p = s.get(Policy, pid)
     if not p:
         raise HTTPException(404, "not found")
@@ -1078,17 +1087,14 @@ def list_goals():
 
 
 @app.post("/api/goals")
-def add_goal(payload: dict = Body(...)):
+def add_goal(body: schemas.GoalIn):
     s = db()
-    year = int(payload.get("target_year") or 0)
-    if year < 0 or year > 60:
-        raise HTTPException(400, "target_year must be between 0 and 60")
-    g = Goal(name=payload["name"], target_year=year,
-             amount_today=float(payload["amount_today"]),
-             inflation_pct=float(payload.get("inflation_pct")
-                                 if payload.get("inflation_pct") is not None
-                                 else fi_mod.DEFAULT_GOAL_INFLATION),
-             notes=payload.get("notes") or "")
+    g = Goal(name=body.name, target_year=body.target_year,
+             amount_today=body.amount_today,
+             inflation_pct=(body.inflation_pct
+                            if body.inflation_pct is not None
+                            else fi_mod.DEFAULT_GOAL_INFLATION),
+             notes=body.notes or "")
     s.add(g)
     s.commit()
     out = goal_dict(g)
@@ -1235,7 +1241,7 @@ def family_record_status():
 
 
 @app.post("/api/family-record/sealed")
-def family_record_sealed(payload: dict = Body(...)):
+def family_record_sealed(body: schemas.SealedRecordIn):
     """The full record, AES-256 encrypted. The password is never stored."""
     s = db()
     if not _record_enabled(s):
@@ -1248,7 +1254,7 @@ def family_record_sealed(payload: dict = Body(...)):
         pdf = fr_mod.build_sealed_record(
             data["holdings"], data["policies"], data["loans"],
             [h.get("owner") for h in data["holdings"]], household=household)
-        enc = fr_mod.encrypt_pdf(pdf, payload.get("password") or "")
+        enc = fr_mod.encrypt_pdf(pdf, body.password)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     except fr_mod.EncryptionUnavailable as exc:
@@ -1370,25 +1376,25 @@ def privacy_state():
 
 
 @app.post("/api/privacy/offline")
-def set_offline(payload: dict = Body(...)):
+def set_offline(body: schemas.OfflineIn):
     """Stop the app contacting anything at all.
 
     Prices then come only from what you type, which is a real cost -- and
     the point: the app keeps working with the network switched off, which is
     the sort of claim a user can check in a minute.
     """
-    return {"offline": config_mod.set_offline(bool(payload.get("offline")))}
+    return {"offline": config_mod.set_offline(body.offline)}
 
 
 @app.post("/api/privacy/data-dir")
-def move_data_dir(payload: dict = Body(...)):
+def move_data_dir(body: schemas.DataDirIn):
     """Point the app at a different folder, copying what is already there."""
     try:
-        if payload.get("reset"):
+        if body.reset:
             config_mod.clear_data_dir()
             db_mod.reset_engines()
             return {"data_dir": config_mod.data_dir(), "copied": []}
-        result = config_mod.move_data(payload.get("path"))
+        result = config_mod.move_data(body.path)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     db_mod.reset_engines()               # reopen against the new location
@@ -1406,13 +1412,12 @@ def list_profiles():
 
 
 @app.post("/api/profiles")
-def create_profile(payload: dict = Body(...)):
+def create_profile(body: schemas.ProfileIn):
     try:
-        p = profiles_mod.create(payload.get("name"),
-                                demo=bool(payload.get("demo")))
+        p = profiles_mod.create(body.name, demo=body.demo)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
-    if payload.get("demo"):
+    if body.demo:
         from demo_data import seed
         s = get_session(profiles_mod.path_for(p["id"]))
         service.ensure_default_owner(s)
@@ -1422,15 +1427,15 @@ def create_profile(payload: dict = Body(...)):
 
 
 @app.put("/api/profiles/{pid}")
-def rename_profile(pid: str, payload: dict = Body(...)):
+def rename_profile(pid: str, body: schemas.ProfileRename):
     try:
-        return profiles_mod.rename(pid, payload.get("name"))
+        return profiles_mod.rename(pid, body.name)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
 
 
 @app.delete("/api/profiles/{pid}")
-def delete_profile(pid: str, payload: dict = Body(default=None),
+def delete_profile(pid: str, body: schemas.ConfirmIn = None,
                    confirm: str = ""):
     """Delete a profile and its data file.
 
@@ -1439,7 +1444,7 @@ def delete_profile(pid: str, payload: dict = Body(default=None),
     It travels in the body: a profile name in the query string ends up in
     browser history and the server's access log.
     """
-    confirm = ((payload or {}).get("confirm") or confirm)
+    confirm = ((body.confirm if body else "") or confirm)
     p = profiles_mod.get(pid)
     if p["id"] != pid:
         raise HTTPException(404, "No such profile.")
@@ -1492,13 +1497,18 @@ def clear_demo():
 
 
 @app.post("/api/reset")
-def reset_all(payload: dict = Body(...)):
+def reset_all(body: schemas.ConfirmIn):
     """Wipe ALL data. Requires {"confirm": "ERASE"} to guard against slips."""
-    if payload.get("confirm") != "ERASE":
+    if body.confirm != "ERASE":
         raise HTTPException(400, "pass {\"confirm\": \"ERASE\"} to wipe all data")
     s = db()
-    for model in (Transaction, Holding, Loan, RecurringOutflow, IncomeEntry,
-                  ExpenseEntry, Snapshot, Owner):
+    # Policies and goals were missing here, so "erase all data" left them
+    # behind pointing at an owner that no longer existed. With foreign_keys
+    # ON that is an error rather than a silent orphan -- which is the whole
+    # reason for turning the pragma on. Owner goes last: everything else
+    # references it.
+    for model in (Transaction, Holding, Policy, Goal, Loan, RecurringOutflow,
+                  IncomeEntry, ExpenseEntry, Snapshot, Owner):
         s.query(model).delete()
     s.commit()
     service.forget_owner_check(s)     # the default owner just went with it

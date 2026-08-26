@@ -65,19 +65,43 @@ export default function Portfolio({ summary, meta, owners, reload }) {
     setBusy(true)
     try {
       const r = await api.post('/api/prices/refresh')
-      let m = `MF NAVs updated: ${r.mf_updated} · stocks updated: ${r.stocks_updated}`
+      const bits = [`MF NAVs updated: ${r.mf_updated}`,
+        `stocks updated: ${r.stocks_updated}`]
+      const everythingFailed = !r.amfi_reachable && r.stocks_updated === 0
       if (r.offline) {
-        m += ' · offline mode is on, so nothing was fetched. Turn it off on'
-          + ' the Privacy page to refresh prices.'
-      } else if (!r.amfi_reachable) {
-        m += ' · AMFI could not be reached — check your internet connection,'
-          + ' then try again. Prices are left as they were.'
-      } else if (r.mf_failed?.length) {
-        m += ` · no NAV for ${r.mf_failed.join(', ')}. AMFI prices by scheme`
-          + ' code, so a fund identified only by its folio cannot be matched'
-          + ' — use Find AMFI scheme code below and put the code in Identifier.'
+        bits.push('offline mode is on, so nothing was fetched. Turn it off on'
+          + ' the Privacy page to refresh prices.')
+      } else if (everythingFailed) {
+        // Both feeds failing at once is a network problem, not two data
+        // problems — say so once instead of listing every holding.
+        bits.push('nothing could be fetched from either price source'
+          + (r.reason ? ' — ' + r.reason : '')
+          + ' Open Privacy → Test connection for the details. Prices are'
+          + ' left exactly as they were.')
+      } else {
+        if (!r.amfi_reachable) {
+          bits.push('AMFI could not be reached'
+            + (r.reason ? ' — ' + r.reason : '.'))
+        } else if (r.mf_failed?.length) {
+          bits.push(`no NAV for ${r.mf_failed.join(', ')}. AMFI prices by`
+            + ' scheme code, so a fund identified only by its folio cannot be'
+            + ' matched — use Find AMFI scheme code below and put the code in'
+            + ' Identifier.')
+        }
+        if (r.stock_failed?.length) {
+          bits.push('no price for: ' + r.stock_failed.join(', ')
+            + '. Check the ticker matches the NSE symbol.')
+        }
       }
-      if (r.stock_failed.length) m += ' · no price for: ' + r.stock_failed.join(', ')
+      if (r.stock_no_ticker?.length) {
+        bits.push(`${r.stock_no_ticker.length} stock(s) have no ticker in`
+          + ' Identifier, so there is nothing to look up: '
+          + r.stock_no_ticker.slice(0, 6).join(', ')
+          + (r.stock_no_ticker.length > 6 ? ' …' : '')
+          + '. Put the NSE symbol there (e.g. RELIANCE for Reliance'
+          + ' Industries).')
+      }
+      const m = bits.join(' · ')
       setMsg(m)
       reload()
     } catch (err) { setMsg('Error: ' + err.message) }

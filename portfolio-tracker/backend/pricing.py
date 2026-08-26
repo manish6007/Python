@@ -14,9 +14,60 @@ import netlog
 
 AMFI_NAV_URL = "https://www.amfiindia.com/spages/NAVAll.txt"
 
+# Both feeds are public pages meant for browsers, and both reject the default
+# `python-requests/2.x` agent -- AMFI's WAF with a 403, Yahoo's chart API with
+# a 429. Nothing here identifies the user or the machine; it is the minimum
+# that makes a plain GET behave like the browser tab it stands in for.
+BROWSER_HEADERS = {
+    "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                   "AppleWebKit/537.36 (KHTML, like Gecko) "
+                   "Chrome/124.0 Safari/537.36"),
+    "Accept": "text/html,application/json,text/plain,*/*",
+    "Accept-Language": "en-IN,en;q=0.9",
+}
+
 
 class Offline(Exception):
     """Raised instead of opening a connection while offline mode is on."""
+
+
+def explain(exc):
+    """Why a fetch failed, in words that suggest what to do about it.
+
+    "Check your internet connection" is not an answer when the connection is
+    fine and a TLS interception proxy is the problem. requests wraps very
+    different causes in similar-looking exceptions, so they are separated
+    here once and reused by the refresh, the log and the connection test.
+    """
+    if isinstance(exc, requests.exceptions.SSLError):
+        return ("the secure connection could not be verified. Usually a "
+                "company network, antivirus or VPN inspecting traffic, or "
+                "an out-of-date certificate store (pip install -U certifi).")
+    if isinstance(exc, requests.exceptions.ProxyError):
+        return ("a proxy refused the connection. If you use one, set "
+                "HTTPS_PROXY before starting the app.")
+    if isinstance(exc, requests.exceptions.ConnectTimeout):
+        return "the server did not answer in time. It may be down, or blocked."
+    if isinstance(exc, requests.exceptions.ReadTimeout):
+        return "the server accepted the connection then stalled."
+    if isinstance(exc, requests.exceptions.ConnectionError):
+        detail = str(exc).lower()
+        if "name or service not known" in detail or "nodename nor" in detail \
+                or "getaddrinfo" in detail:
+            return ("the address could not be resolved -- DNS is not "
+                    "answering, or the machine is offline.")
+        return ("the connection was refused or dropped. A firewall, VPN or "
+                "network filter is the usual cause.")
+    if isinstance(exc, requests.exceptions.HTTPError):
+        code = getattr(exc.response, "status_code", 0)
+        if code in (401, 403):
+            return ("the server refused the request (HTTP %d). It is "
+                    "rejecting this app rather than failing." % code)
+        if code == 429:
+            return ("the server asked us to slow down (HTTP 429). Wait a few "
+                    "minutes and try again.")
+        return "the server answered HTTP %d." % code
+    return str(exc)
 
 
 def _get(url, timeout):
@@ -35,13 +86,37 @@ def _get(url, timeout):
         netlog.record(host, purpose, "blocked", "offline mode is on")
         raise Offline("Offline mode is on, so nothing was fetched.")
     try:
-        resp = requests.get(url, timeout=timeout)
+        resp = requests.get(url, timeout=timeout, headers=BROWSER_HEADERS)
         resp.raise_for_status()
     except requests.RequestException as exc:
-        netlog.record(host, purpose, "failed", str(exc))
+        netlog.record(host, purpose, "failed", explain(exc))
         raise
     netlog.record(host, purpose, "ok", "%d bytes" % len(resp.content))
     return resp
+
+
+def check_hosts(timeout=10):
+    """Try each allowed host once and report exactly what happened.
+
+    Written because "AMFI could not be reached -- check your internet
+    connection" is useless when the connection is fine. One row per host,
+    with the real reason.
+    """
+    probes = [(AMFI_NAV_URL, "Mutual-fund NAVs (AMFI)"),
+              (CHART_URL.format(symbol="RELIANCE.NS"), "Stock prices (Yahoo)")]
+    out = []
+    for url, label in probes:
+        host = urlparse(url).hostname
+        row = {"host": host, "label": label}
+        try:
+            resp = _get(url, timeout)
+            row.update(ok=True, detail="%d bytes received" % len(resp.content))
+        except Offline as exc:
+            row.update(ok=False, detail=str(exc))
+        except requests.RequestException as exc:
+            row.update(ok=False, detail=explain(exc))
+        out.append(row)
+    return out
 
 
 def parse_amfi_dump(text):

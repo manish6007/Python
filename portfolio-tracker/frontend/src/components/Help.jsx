@@ -58,7 +58,8 @@ const SECTIONS = [
       ['Prices',
         ['Refresh prices pulls MF NAVs from AMFI and stock prices from Yahoo. Give each holding its code or ticker first.',
           'AMFI prices by scheme code, not by folio number, so a fund showing no NAV usually needs its code — Find AMFI scheme code, then put the code in Identifier. Funds imported from a CAS resolve their own code from the ISIN on the next refresh.',
-          'It needs working internet. If AMFI cannot be reached you are told so, and prices are left exactly as they were rather than zeroed.']],
+          'Stocks need the NSE symbol in Identifier — RELIANCE, not “Reliance Industries”. Holdings with no ticker at all are listed separately from lookups that failed; they are different problems.',
+          'If nothing comes back at all, that is one network problem rather than dozens of data problems. The message names the likely cause, and Privacy → Test connection probes each host and reports exactly what happened. Prices are never zeroed on failure.']],
     ],
   },
   {

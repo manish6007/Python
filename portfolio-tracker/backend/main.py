@@ -644,22 +644,31 @@ def refresh_prices():
             else:
                 mf_failed.append(h.name)
     stocks = list(s.query(Holding).filter(Holding.asset_class == "stock"))
+    # A holding with no ticker is a different problem from a lookup that
+    # failed, and lumping them together sent people to check their internet
+    # connection when the fix was to fill in a field.
+    no_ticker = [h.name for h in stocks if not (h.identifier or "").strip()]
+    priceable = [h for h in stocks if (h.identifier or "").strip()]
     # Fetched together and de-duplicated: the same stock held by two people
     # is one price, and thirty holdings should not mean thirty waits.
-    prices = pricing.fetch_stock_prices(
-        [h.identifier or h.name for h in stocks])
-    for h in stocks:
-        px, pd_ = prices.get(h.identifier or h.name, (None, None))
+    prices = pricing.fetch_stock_prices([h.identifier for h in priceable])
+    for h in priceable:
+        px, pd_ = prices.get(h.identifier.strip(), (None, None))
         if px:
             h.last_price, h.price_date = px, pd_
             stock_updated += 1
         else:
-            failed.append(h.name)
+            failed.append("%s (%s)" % (h.name, h.identifier.strip()))
     s.commit()
     s.close()
+    # The reason the last attempt failed, so the answer is in the message
+    # rather than three clicks away on the Privacy page.
+    reason = next((e["detail"] for e in netlog.entries()
+                   if e["outcome"] in ("failed", "refused")), "")
     return {"amfi_reachable": bool(navs), "offline": config_mod.offline(),
             "mf_updated": mf_updated, "mf_failed": mf_failed,
-            "stocks_updated": stock_updated, "stock_failed": failed}
+            "stocks_updated": stock_updated, "stock_failed": failed,
+            "stock_no_ticker": no_ticker, "reason": reason}
 
 
 @app.get("/api/amfi/search")
@@ -1373,6 +1382,12 @@ def privacy_state():
         "outbound": netlog.entries(),
         "started": _started.isoformat(timespec="seconds"),
     }
+
+
+@app.get("/api/privacy/test-connection")
+def test_connection():
+    """Try each allowed host and say exactly what happened to each."""
+    return {"results": pricing.check_hosts(), "offline": config_mod.offline()}
 
 
 @app.post("/api/privacy/offline")

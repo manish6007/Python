@@ -185,8 +185,9 @@ def test_stock_prices_are_now_behind_the_enforced_allowlist(store,
         def json(self):
             return CHART
 
-    def fake_get(url, timeout=None):
+    def fake_get(url, timeout=None, headers=None):
         seen["url"] = url
+        seen["headers"] = headers or {}
         return Resp()
     monkeypatch.setattr(pricing.requests, "get", fake_get)
     assert pricing.fetch_stock_price("RELIANCE")[0] == 1400.5
@@ -195,6 +196,8 @@ def test_stock_prices_are_now_behind_the_enforced_allowlist(store,
     entry = netlog.entries()[0]
     assert entry["host"] == "query1.finance.yahoo.com"
     assert entry["outcome"] == "ok"
+    # Both feeds reject the default python-requests agent.
+    assert "Mozilla" in seen["headers"].get("User-Agent", "")
 
 
 def test_offline_mode_blocks_stock_prices_too(store, monkeypatch):
@@ -213,3 +216,47 @@ def test_symbols_are_de_duplicated_before_fetching(store, monkeypatch):
     out = pricing.fetch_stock_prices(["RELIANCE", "RELIANCE", "TCS", ""])
     assert sorted(calls) == ["RELIANCE", "TCS"]
     assert set(out) == {"RELIANCE", "TCS"}
+
+
+# ---- saying why, not "check your internet connection" --------------------
+def test_each_kind_of_failure_gets_its_own_explanation(store):
+    import requests as rq
+    ssl = pricing.explain(rq.exceptions.SSLError("bad handshake"))
+    assert "certificate" in ssl or "inspecting traffic" in ssl
+
+    dns = pricing.explain(rq.exceptions.ConnectionError(
+        "Failed to resolve: Name or service not known"))
+    assert "DNS" in dns
+
+    proxy = pricing.explain(rq.exceptions.ProxyError("tunnel failed"))
+    assert "proxy" in proxy.lower()
+
+    resp = type("R", (), {"status_code": 403})()
+    forbidden = pricing.explain(rq.exceptions.HTTPError(response=resp))
+    assert "403" in forbidden and "refused" in forbidden
+
+    resp429 = type("R", (), {"status_code": 429})()
+    assert "429" in pricing.explain(rq.exceptions.HTTPError(response=resp429))
+
+
+def test_the_connection_test_reports_one_row_per_host(store, monkeypatch):
+    import requests as rq
+
+    def boom(*a, **k):
+        raise rq.exceptions.SSLError("bad handshake")
+    monkeypatch.setattr(pricing.requests, "get", boom)
+    rows = pricing.check_hosts(timeout=1)
+    assert [r["host"] for r in rows] == ["www.amfiindia.com",
+                                         "query1.finance.yahoo.com"]
+    assert all(r["ok"] is False for r in rows)
+    assert all("certificate" in r["detail"] or "inspecting" in r["detail"]
+               for r in rows)
+
+
+def test_the_connection_test_says_so_when_offline(store, monkeypatch):
+    def explode(*a, **k):
+        raise AssertionError("a connection was opened while offline")
+    monkeypatch.setattr(pricing.requests, "get", explode)
+    config.set_offline(True)
+    rows = pricing.check_hosts(timeout=1)
+    assert all("Offline mode" in r["detail"] for r in rows)

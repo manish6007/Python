@@ -32,11 +32,25 @@ export default function Privacy() {
   const [dir, setDir] = useState('')
   const [msg, setMsg] = useState('')
   const [busy, setBusy] = useState(false)
+  const [probe, setProbe] = useState(null)
+  const [probing, setProbing] = useState(false)
 
   const load = () => api.get('/api/privacy').then((s) => {
     setState(s); setDir(s.data_dir)
   }).catch(() => {})
   useEffect(() => { load() }, [])
+
+  const testConnection = async () => {
+    setProbing(true); setProbe(null)
+    try {
+      setProbe(await api.get('/api/privacy/test-connection'))
+    } catch (e) {
+      setProbe({ results: [{ host: '—', label: 'the test itself failed',
+        ok: false, detail: e.message }] })
+    }
+    setProbing(false)
+    load()
+  }
 
   const toggleOffline = async () => {
     await api.post('/api/privacy/offline', { offline: !state.offline })
@@ -117,6 +131,34 @@ export default function Privacy() {
             ))}
           </tbody>
         </table>
+
+        <div className="row" style={{ marginTop: 14, alignItems: 'center' }}>
+          <button className="btn secondary" disabled={probing}
+            onClick={testConnection}>
+            {probing ? 'Testing…' : 'Test connection'}
+          </button>
+          <span className="small muted" style={{ flex: 1, minWidth: 240 }}>
+            Tries each host once and says exactly what happened — the answer
+            when prices will not refresh.
+          </span>
+        </div>
+        {probe && (
+          <table className="data" style={{ marginTop: 8 }}>
+            <tbody>
+              {probe.results.map((r) => (
+                <tr key={r.host}>
+                  <td className="small">{r.label}
+                    <div className="muted">{r.host}</div>
+                  </td>
+                  <td className="small" style={{
+                    color: r.ok ? 'var(--good-text)' : 'var(--serious)' }}>
+                    {r.ok ? '✓ reachable' : '✕ failed'} — {r.detail}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
 
         <div className="row" style={{ marginTop: 14, alignItems: 'center' }}>
           <button className={'btn' + (state.offline ? '' : ' secondary')}

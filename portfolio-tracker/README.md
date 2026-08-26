@@ -189,12 +189,20 @@ because the app cannot know which side is right.
 | **Counts as** | Overrides the allocation bucket, e.g. a sweep FD filed under Cash |
 | **⊞ split** | Splits one holding across buckets — for multi-asset funds |
 
-**Refresh prices** pulls MF NAVs from AMFI and stock prices from Yahoo. AMFI
-prices by *scheme code*, so a fund still carrying only its folio number cannot
-be matched — the refresh names those funds instead of reporting a silent zero,
-and resolves the code itself from the ISIN when a CAS import supplied one.
-It needs working internet; if AMFI cannot be reached, prices are left exactly
-as they were.
+**Refresh prices** pulls MF NAVs from AMFI and stock prices from Yahoo.
+
+- AMFI prices by *scheme code*, so a fund still carrying only its folio
+  number cannot be matched. The refresh names those funds rather than
+  reporting a silent zero, and resolves the code itself from the ISIN when a
+  CAS import supplied one.
+- Stocks need the **NSE symbol** in Identifier (`RELIANCE`, not "Reliance
+  Industries"). Holdings with no ticker are listed separately from lookups
+  that failed — they are different problems with different fixes.
+- If nothing at all comes back, that is one network problem rather than
+  dozens of data problems, and the message says which: a TLS interception
+  proxy, DNS, a firewall, or the host refusing us. **Privacy → Test
+  connection** tries each host once and reports exactly what happened.
+  Prices are never zeroed on failure; they are left as they were.
 **Unrealised gains & losses** shows the long/short split and how many holdings
 are underwater.
 
@@ -239,7 +247,8 @@ the plan.
 - **Where your data is** — the real file paths, sizes and last-written times.
   Back those files up and you have backed up everything.
 - **What leaves this machine** — the four hosts the app can reach (AMFI for
-  NAVs, three Yahoo hosts for stock prices) and nothing else. An unlisted
+  NAVs, three Yahoo hosts for stock prices) and nothing else. **Test
+  connection** probes them and names the real cause when one fails. An unlisted
   host is refused in code before a connection is opened, not merely absent
   from a policy document.
 - **Every request since the app started** — host, purpose, outcome. If the
@@ -385,7 +394,7 @@ misspelled field is rejected instead of silently ignored, and
 CI runs both, plus a frontend build, on every push touching
 `portfolio-tracker/` — see `.github/workflows/portfolio-tracker.yml`.
 
-199 tests. The pure analytics and FI modules, the importers, profiles,
+202 tests. The pure analytics and FI modules, the importers, profiles,
 privacy — and `test_api.py`, which goes through HTTP rather than around it,
 because the host check, the CORS configuration, profile selection from the
 cookie and the session lifecycle only exist on the request path.

@@ -263,6 +263,15 @@ class SettingsIn(Open):
     targets: Optional[Dict[str, float]] = None
 
 
+class CodeAssignment(Strict):
+    holding_id: int
+    scheme_code: str = Field(min_length=1, max_length=12)
+
+
+class ApplyCodes(Strict):
+    assignments: List[CodeAssignment] = Field(default_factory=list)
+
+
 # ---------------- privacy, profiles, danger ----------------
 class OfflineIn(Strict):
     offline: bool

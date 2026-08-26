@@ -25,6 +25,7 @@ import export as export_mod
 import family_record as fr_mod
 import fi as fi_mod
 import importers as imp_mod
+import matching
 import netlog
 import pricing
 import profiles as profiles_mod
@@ -694,17 +695,108 @@ def refresh_prices():
             "stock_no_ticker": no_ticker, "reason": reason}
 
 
-@app.get("/api/amfi/search")
-def amfi_search(q: str):
+# A recorded price is only worth comparing against today's NAV when it is
+# actually a recent NAV. Most of the time it is the average purchase cost --
+# the app writes last_price = avg_cost when a holding is created, and a fund
+# bought five years ago is legitimately far from its purchase price. Treating
+# that as evidence rejected every correct match.
+OBSERVED_NAV_DAYS = 45
+
+
+def _observed_nav(h):
+    """The holding's price if it is a real observed NAV, else None."""
+    price, cost = h.last_price or 0.0, h.avg_cost or 0.0
+    if not price or not h.price_date:
+        return None
+    if abs(price - cost) < 0.005:        # the placeholder written at creation
+        return None
+    if (date.today() - h.price_date).days > OBSERVED_NAV_DAYS:
+        return None                      # too old to say anything about today
+    return price
+
+
+@app.get("/api/amfi/suggest-codes")
+def suggest_scheme_codes(plan: str = matching.DEFAULT_PLAN,
+                         option: str = matching.DEFAULT_OPTION):
+    """Candidate AMFI codes for every fund that has none.
+
+    Without a code a fund cannot be priced, and nobody knows their scheme
+    codes -- so a portfolio typed in by hand has a dozen funds stuck at
+    their purchase price forever. This proposes the matches; the user
+    applies them.
+    """
+    navs, _, status = _amfi_navs()
+    if status != pricing.AMFI_OK:
+        return {"amfi_status": status, "holdings": []}
+    s = db()
+    out = []
+    for h in s.query(Holding).filter(Holding.asset_class == "mutual_fund"):
+        if matching.looks_like_scheme_code(h.identifier) \
+                and str(h.identifier).strip() in navs:
+            continue
+        observed = _observed_nav(h)
+        sugg = matching.suggest(h.name, navs, want_plan=plan,
+                                want_option=option, known_price=observed)
+        out.append({"holding_id": h.id, "name": h.name,
+                    "identifier": h.identifier or "",
+                    "last_price": h.last_price or 0.0,
+                    "compared_against": observed, **sugg})
+    s.close()
+    return {"amfi_status": status, "holdings": out}
+
+
+@app.post("/api/amfi/apply-codes")
+def apply_scheme_codes(body: schemas.ApplyCodes):
+    """Set the chosen scheme code on each fund and price it straight away."""
+    navs, _, status = _amfi_navs()
+    s = db()
+    applied, errors = 0, []
+    for item in body.assignments:
+        h = s.get(Holding, item.holding_id)
+        if not h:
+            errors.append("holding %d no longer exists" % item.holding_id)
+            continue
+        info = navs.get(item.scheme_code)
+        if not info:
+            errors.append("%s is not an AMFI scheme code" % item.scheme_code)
+            continue
+        # The folio is not lost: it moves to meta, where the family record
+        # and the CAS reconciliation still need it.
+        meta = h.meta_dict()
+        ident = (h.identifier or "").strip()
+        if ident and ident != item.scheme_code:
+            meta["folio"] = ident
+            h.meta = json.dumps(meta)
+        h.identifier = item.scheme_code
+        h.last_price, h.price_date = info["nav"], info["date"]
+        applied += 1
+    s.commit()
+    s.close()
+    return {"applied": applied, "errors": errors}
+
+
+def _amfi_navs():
+    """Today's NAV table, downloaded at most once every AMFI_CACHE_HOURS."""
     fresh = (_amfi_cache["at"] is not None
              and (datetime.now() - _amfi_cache["at"]).total_seconds()
              < AMFI_CACHE_HOURS * 3600)
-    if not _amfi_cache["data"] or not fresh:
-        navs = pricing.fetch_amfi_navs()
-        if navs:                          # keep yesterday's rather than none
-            _amfi_cache["data"] = navs
-            _amfi_cache["at"] = datetime.now()
-    hits = pricing.search_amfi(_amfi_cache["data"], q)
+    if _amfi_cache["data"] and fresh:
+        return _amfi_cache["data"], _amfi_cache.get("by_isin", {}), \
+            pricing.AMFI_OK
+    navs, by_isin, status = pricing.fetch_amfi()
+    if navs:                              # keep yesterday's rather than none
+        _amfi_cache["data"], _amfi_cache["by_isin"] = navs, by_isin
+        _amfi_cache["at"] = datetime.now()
+    elif _amfi_cache["data"]:
+        return _amfi_cache["data"], _amfi_cache.get("by_isin", {}), \
+            pricing.AMFI_OK
+    return navs, by_isin, status
+
+
+@app.get("/api/amfi/search")
+def amfi_search(q: str):
+    navs, _, _ = _amfi_navs()
+    hits = pricing.search_amfi(navs, q)
     return [{"code": c, "name": i["name"], "nav": i["nav"],
              "date": i["date"].isoformat()} for c, i in hits]
 

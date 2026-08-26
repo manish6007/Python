@@ -191,10 +191,15 @@ because the app cannot know which side is right.
 
 **Refresh prices** pulls MF NAVs from AMFI and stock prices from Yahoo.
 
-- AMFI prices by *scheme code*, so a fund still carrying only its folio
-  number cannot be matched. The refresh names those funds rather than
-  reporting a silent zero, and resolves the code itself from the ISIN when a
-  CAS import supplied one.
+- AMFI prices by *scheme code*, and nobody knows their scheme codes. A CAS
+  import resolves them from the ISIN; for everything else, **Match funds to
+  AMFI codes** on the Portfolio page proposes the scheme for each fund by
+  name and applies the lot in one click. It never picks silently: every fund
+  exists as Direct/Regular × Growth/IDCW with genuinely different NAVs, so
+  the plan and option are always shown, only unambiguous matches are
+  pre-ticked, and where a fund already has a recent NAV recorded the scheme
+  whose price agrees with it wins — which is the surest way to tell Direct
+  from Regular.
 - Stocks need the **NSE symbol** in Identifier (`RELIANCE`, not "Reliance
   Industries"). Holdings with no ticker are listed separately from lookups
   that failed — they are different problems with different fixes.
@@ -394,7 +399,7 @@ misspelled field is rejected instead of silently ignored, and
 CI runs both, plus a frontend build, on every push touching
 `portfolio-tracker/` — see `.github/workflows/portfolio-tracker.yml`.
 
-202 tests. The pure analytics and FI modules, the importers, profiles,
+233 tests. The pure analytics and FI modules, the importers, profiles,
 privacy — and `test_api.py`, which goes through HTTP rather than around it,
 because the host check, the CORS configuration, profile selection from the
 cookie and the session lifecycle only exist on the request path.

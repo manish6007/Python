@@ -354,3 +354,86 @@ def test_a_readable_nav_file_and_an_unreadable_one_report_differently(client,
     body = client.post("/api/prices/refresh").json()
     assert body["amfi_status"] == "unreadable"
     assert body["amfi_reachable"] is False      # still no NAVs, different why
+
+
+# ---- giving funds the code that prices them -----------------------------
+def _stub_amfi(monkeypatch, main_mod):
+    """A small AMFI table, so the suggestion path can be tested offline."""
+    from datetime import date as _date
+    import pricing
+    navs, code, nav = {}, 100000, 50.0
+    for base in ("DSP Midcap Fund", "Parag Parikh Flexi Cap Fund"):
+        for plan in ("Direct Plan", "Regular Plan"):
+            nav += 20
+            navs[str(code)] = {"name": "%s - %s - Growth" % (base, plan),
+                               "nav": nav, "date": _date(2026, 8, 26)}
+            code += 1
+    monkeypatch.setattr(pricing, "fetch_amfi",
+                        lambda *a, **k: (navs, {}, pricing.AMFI_OK))
+    main_mod._amfi_cache.update(data={}, at=None, by_isin={})
+    return navs
+
+
+def test_a_fund_with_a_folio_gets_its_code_suggested(client, monkeypatch):
+    _stub_amfi(monkeypatch, main)
+    client.post("/api/holdings", json={
+        "asset_class": "mutual_fund", "name": "DSP Midcap Fund",
+        "identifier": "90722941761/0", "units": 100, "avg_cost": 50})
+    body = client.get("/api/amfi/suggest-codes").json()
+    assert len(body["holdings"]) == 1
+    row = body["holdings"][0]
+    assert row["confident"] is True
+    assert row["candidates"][0]["name"].startswith("DSP Midcap Fund - Direct")
+
+
+def test_a_fund_that_already_has_a_code_is_left_out(client, monkeypatch):
+    navs = _stub_amfi(monkeypatch, main)
+    code = next(iter(navs))
+    client.post("/api/holdings", json={
+        "asset_class": "mutual_fund", "name": "DSP Midcap Fund",
+        "identifier": code, "units": 100, "avg_cost": 50})
+    assert client.get("/api/amfi/suggest-codes").json()["holdings"] == []
+
+
+def test_applying_a_code_prices_the_fund_and_keeps_the_folio(client,
+                                                             monkeypatch):
+    navs = _stub_amfi(monkeypatch, main)
+    h = client.post("/api/holdings", json={
+        "asset_class": "mutual_fund", "name": "DSP Midcap Fund",
+        "identifier": "90722941761/0", "units": 100, "avg_cost": 50}).json()
+    row = client.get("/api/amfi/suggest-codes").json()["holdings"][0]
+    code = row["candidates"][0]["code"]
+
+    r = client.post("/api/amfi/apply-codes", json={"assignments": [
+        {"holding_id": h["id"], "scheme_code": code}]}).json()
+    assert r["applied"] == 1 and r["errors"] == []
+
+    after = client.get("/api/holdings").json()[0]
+    assert after["identifier"] == code
+    assert after["last_price"] == navs[code]["nav"]
+    # The folio is needed by the family record and CAS reconciliation.
+    assert after["meta"]["folio"] == "90722941761/0"
+    assert client.get("/api/amfi/suggest-codes").json()["holdings"] == []
+
+
+def test_applying_a_code_that_is_not_a_scheme_is_refused(client, monkeypatch):
+    _stub_amfi(monkeypatch, main)
+    h = client.post("/api/holdings", json={
+        "asset_class": "mutual_fund", "name": "DSP Midcap Fund",
+        "units": 1, "avg_cost": 50}).json()
+    r = client.post("/api/amfi/apply-codes", json={"assignments": [
+        {"holding_id": h["id"], "scheme_code": "999999"}]}).json()
+    assert r["applied"] == 0 and "not an AMFI scheme code" in r["errors"][0]
+
+
+def test_a_purchase_price_is_not_treated_as_a_recent_nav(client, monkeypatch):
+    """The app writes last_price = avg_cost when a holding is created. Read
+    as evidence, that rejected every correct match for funds bought years
+    ago at a very different price."""
+    _stub_amfi(monkeypatch, main)
+    client.post("/api/holdings", json={
+        "asset_class": "mutual_fund", "name": "DSP Midcap Fund",
+        "units": 100, "avg_cost": 12.5})       # nothing like today's NAV
+    row = client.get("/api/amfi/suggest-codes").json()["holdings"][0]
+    assert row["compared_against"] is None
+    assert row["confident"] is True

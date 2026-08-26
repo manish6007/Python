@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
 import { api, BUCKET_LABELS, inr } from '../api'
 import ImportWizard from './ImportWizard'
+import SchemeCodes from '../components/SchemeCodes'
 
 const UNIT_CLASSES = ['mutual_fund', 'stock', 'gold_etf', 'reit', 'sgb', 'nps', 'gold_physical']
 const BALANCE_CLASSES = ['savings', 'epf', 'ppf', 'other']
@@ -173,6 +174,8 @@ export default function Portfolio({ summary, meta, owners, reload }) {
       {msg && <div className="notice">{msg}</div>}
 
       <ImportWizard meta={meta} owners={owners} reload={reload} />
+
+      <SchemeCodes reload={reload} />
 
       <div className="card">
         <h2>Add a holding</h2>

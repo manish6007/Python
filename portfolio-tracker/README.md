@@ -80,6 +80,16 @@ each average rests on, whether income is gross or net, what is estimated, and
 every inconsistency the app has spotted, so a reviewer asks instead of
 assuming.
 
+### Show it to someone without showing them your money
+Profiles: several completely separate portfolios in one installation, each in
+its own database file. Switch to a demo one from the top bar and none of your
+own numbers can appear on any screen. A new profile can be created pre-filled
+with a sample household, so a demo takes one click rather than an evening of
+typing.
+
+This separates data; it is not a lock — see
+[Privacy and security](#privacy-and-security).
+
 ### Leave your family a record
 Two documents: a **sealed PDF** (AES-256) listing every account, folio, policy
 and loan in full, and an **open one-page locator sheet** saying where the
@@ -219,7 +229,17 @@ the plan.
 ### Settings
 
 Household members, target allocation with age-based and risk-profile presets,
-planning inputs, demo data, and a confirm-guarded **Erase all data**.
+planning inputs, profiles, demo data, and a confirm-guarded **Erase all data**.
+
+#### Profiles
+
+Create one from **Settings → Profiles**, tick *fill it with demo data*, and
+switch to it from the chip in the top bar — it turns amber on a demo profile,
+so whose numbers are on screen is never a guess. Each profile keeps its own
+holdings, cashflow, loans, settings and snapshots in
+`backend/profiles/<name>.db`; your original portfolio stays in
+`backend/portfolio.db` and cannot be deleted from the UI. Deleting any other
+profile erases that whole portfolio, so it asks you to type the name back.
 
 ---
 
@@ -261,8 +281,16 @@ asset-class level, never specific products — and labelled educational.
 
 ## Privacy and security
 
-- **Your data never leaves your machine.** One SQLite file, no accounts, no
-  cloud, no telemetry. Outbound requests go only to AMFI and Yahoo for prices.
+- **Your data never leaves your machine.** SQLite files on disk, no accounts,
+  no cloud, no telemetry. Outbound requests go only to AMFI and Yahoo for
+  prices.
+- **Profiles separate data; they do not lock it.** There is no login, because
+  on your own laptop one would be theatre — whoever holds the machine can open
+  the `.db` files whatever the screen says. Anyone using it can also switch
+  profiles back. Protect the laptop, not the tab. (If this is ever hosted for
+  other people, real accounts belong *on top of* the profile boundary — every
+  request already says which profile it is for — and holding other people's
+  financial data brings the DPDP Act into scope.)
 - **No credentials, ever.** There is no field anywhere for a username,
   password, PIN or security answer, and there will not be. The app records
   *where* money is and *who inherits it*, never how to log in.
@@ -299,11 +327,11 @@ nominee is often a trustee for the legal heirs rather than the owner.
 cd backend && python -m pytest -q
 ```
 
-123 tests covering the analytics, importers, FI projection and family-record
-documents —
-valuation, XIRR, cashflow averaging, allocation drift and presets, liquidity,
+136 tests covering the analytics, importers, profiles, FI projection and the
+family-record documents — valuation, XIRR, cashflow averaging, allocation drift and presets, liquidity,
 reconciliation, amortisation, the FI accumulation and drawdown model, goal
-impact, insurance gaps, both CAS layouts, and AES-256 encryption round-trips.
+impact, insurance gaps, both CAS layouts, profile isolation, and AES-256
+encryption round-trips.
 
 ```bash
 flake8 backend --max-line-length=127

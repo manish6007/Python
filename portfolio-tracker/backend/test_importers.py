@@ -335,9 +335,11 @@ def test_refresh_prices_resolves_a_cas_fund_by_its_isin(tmp_path, monkeypatch):
     import json
 
     import db
+    import profiles as profiles_mod
     monkeypatch.setattr(db, "DB_PATH", str(tmp_path / "t.db"))
-    monkeypatch.setattr(db, "_engine", None)
-    monkeypatch.setattr(db, "_SessionFactory", None)
+    monkeypatch.setattr(db, "_engines", {})
+    monkeypatch.setattr(db, "_factories", {})
+    monkeypatch.setattr(profiles_mod, "path_for", lambda *a: db.DB_PATH)
     import main
     import pricing
     from datetime import date as _date
@@ -369,9 +371,11 @@ def test_refresh_prices_resolves_a_cas_fund_by_its_isin(tmp_path, monkeypatch):
 def test_refresh_prices_names_the_funds_it_could_not_price(tmp_path,
                                                            monkeypatch):
     import db
+    import profiles as profiles_mod
     monkeypatch.setattr(db, "DB_PATH", str(tmp_path / "t2.db"))
-    monkeypatch.setattr(db, "_engine", None)
-    monkeypatch.setattr(db, "_SessionFactory", None)
+    monkeypatch.setattr(db, "_engines", {})
+    monkeypatch.setattr(db, "_factories", {})
+    monkeypatch.setattr(profiles_mod, "path_for", lambda *a: db.DB_PATH)
     import main
     import pricing
     from datetime import date as _date

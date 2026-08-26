@@ -196,3 +196,19 @@ button.info:hover { background: var(--accent); color: #fff; border-color: var(--
   .help-nav { flex-direction: row; overflow-x: auto; border-right: none;
     border-bottom: 1px solid var(--border); min-width: 0; }
 }
+
+/* ---- profile switcher ---- */
+.profile-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 8px 3px 10px; border-radius: 999px;
+  border: 1px solid var(--baseline); background: var(--page);
+}
+.profile-chip select {
+  border: none; background: none; padding: 2px 4px; font-size: 13px;
+  color: var(--text-primary);
+}
+/* A demo profile is marked, so "whose numbers are these" is never a guess. */
+.profile-chip.demo {
+  border-color: var(--warning);
+  background: color-mix(in oklab, var(--warning) 16%, var(--surface-1));
+}

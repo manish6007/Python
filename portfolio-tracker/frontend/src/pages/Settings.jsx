@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api, BUCKET_LABELS } from '../api'
+import Profiles from '../components/Profiles'
 
 // Fixed colour per bucket - colour follows the bucket, never its rank.
 const BUCKET_COLORS = {
@@ -215,6 +216,8 @@ export default function Settings({ owners, reload }) {
           <button className="btn" onClick={save}>Save settings</button>
         </div>
       </div>
+
+      <Profiles />
 
       <div className="card">
         <h2>Demo data</h2>

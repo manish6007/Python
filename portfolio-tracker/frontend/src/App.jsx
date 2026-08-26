@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from './api'
 import Help from './components/Help'
+import ProfileBar from './components/ProfileBar'
 import Cashflow from './pages/Cashflow'
 import Dashboard from './pages/Dashboard'
 import ExportPage from './pages/ExportPage'
@@ -41,6 +42,7 @@ export default function App() {
     <>
       <header className="topbar">
         <h1>💰 Portfolio Tracker</h1>
+        <ProfileBar />
         <button className="info" title="User guide" aria-label="User guide"
           onClick={() => setHelp(true)}>ⓘ</button>
         <nav>

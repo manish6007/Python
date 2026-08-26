@@ -211,8 +211,10 @@ class Setting(Base):
     value = Column(Text, default="")
 
 
-_engine = None
-_SessionFactory = None
+# One engine per database file. Profiles are separate files, so a session
+# has to be asked for by profile rather than taken from a single global.
+_engines = {}
+_factories = {}
 
 
 def _migrate(engine):
@@ -243,14 +245,20 @@ def _migrate(engine):
                               "ADD COLUMN next_due DATE"))
 
 
-def get_session():
-    global _engine, _SessionFactory
-    if _engine is None:
-        _engine = create_engine(f"sqlite:///{DB_PATH}")
-        Base.metadata.create_all(_engine)
-        _migrate(_engine)
-        _SessionFactory = sessionmaker(bind=_engine)
-    return _SessionFactory()
+def get_session(path=None):
+    """A session on a database file, creating and migrating it on first use.
+
+    path defaults to DB_PATH, the portfolio this installation started with.
+    """
+    path = path or DB_PATH
+    if path not in _factories:
+        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+        engine = create_engine(f"sqlite:///{path}")
+        Base.metadata.create_all(engine)
+        _migrate(engine)
+        _engines[path] = engine
+        _factories[path] = sessionmaker(bind=engine)
+    return _factories[path]()
 
 
 def get_setting(session, key, default=""):

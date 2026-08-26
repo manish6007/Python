@@ -14,12 +14,15 @@ from fastapi import (Body, FastAPI, File, Form, HTTPException, Response,
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from contextvars import ContextVar
+
 import analytics
 import export as export_mod
 import family_record as fr_mod
 import fi as fi_mod
 import importers as imp_mod
 import pricing
+import profiles as profiles_mod
 import service
 from db import (ASSET_CLASS_LABELS, ASSET_CLASSES, ExpenseEntry, Goal,
                 Holding,
@@ -33,9 +36,25 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"],
 
 _amfi_cache = {"data": {}, "at": None}
 
+# Which profile the request in hand is for. A cookie carries it rather than a
+# header, so plain download links -- the export PDF, the locator sheet --
+# reach the right portfolio without every call site remembering to pass it.
+PROFILE_COOKIE = "profile"
+_profile = ContextVar("profile", default=profiles_mod.DEFAULT_ID)
+
+
+@app.middleware("http")
+async def _select_profile(request, call_next):
+    token = _profile.set(request.cookies.get(PROFILE_COOKIE)
+                         or profiles_mod.DEFAULT_ID)
+    try:
+        return await call_next(request)
+    finally:
+        _profile.reset(token)
+
 
 def db():
-    s = get_session()
+    s = get_session(profiles_mod.path_for(_profile.get()))
     service.ensure_default_owner(s)
     return s
 
@@ -1211,6 +1230,70 @@ def export_pdf(privacy: int = 1):
         "Content-Disposition":
             "attachment; filename=portfolio_snapshot_%s.pdf"
             % date.today().isoformat()})
+
+
+# ---------------- profiles ----------------
+@app.get("/api/profiles")
+def list_profiles():
+    """Every profile, and which one this browser is looking at."""
+    active = _profile.get()
+    known = {p["id"] for p in profiles_mod.list_profiles()}
+    return {"active": active if active in known else profiles_mod.DEFAULT_ID,
+            "profiles": profiles_mod.list_profiles()}
+
+
+@app.post("/api/profiles")
+def create_profile(payload: dict = Body(...)):
+    try:
+        p = profiles_mod.create(payload.get("name"),
+                                demo=bool(payload.get("demo")))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    if payload.get("demo"):
+        from demo_data import seed
+        s = get_session(profiles_mod.path_for(p["id"]))
+        service.ensure_default_owner(s)
+        seed(s)
+        s.close()
+    return p
+
+
+@app.put("/api/profiles/{pid}")
+def rename_profile(pid: str, payload: dict = Body(...)):
+    try:
+        return profiles_mod.rename(pid, payload.get("name"))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@app.delete("/api/profiles/{pid}")
+def delete_profile(pid: str, confirm: str = ""):
+    """Delete a profile and its data file.
+
+    Deleting takes the whole portfolio with it, so the caller has to send the
+    profile's own name back as confirmation -- the same bar as Erase all data.
+    """
+    p = profiles_mod.get(pid)
+    if p["id"] != pid:
+        raise HTTPException(404, "No such profile.")
+    if confirm.strip() != p["name"]:
+        raise HTTPException(400, "Type the profile's name to confirm.")
+    try:
+        profiles_mod.delete(pid)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return {"ok": True, "deleted": pid}
+
+
+@app.post("/api/profiles/{pid}/activate")
+def activate_profile(pid: str, response: Response):
+    """Point this browser at a profile. Others are unaffected."""
+    p = profiles_mod.get(pid)
+    if p["id"] != pid:
+        raise HTTPException(404, "No such profile.")
+    response.set_cookie(PROFILE_COOKIE, pid, max_age=60 * 60 * 24 * 365,
+                        samesite="lax", path="/")
+    return {"active": pid}
 
 
 # ---------------- demo data ----------------

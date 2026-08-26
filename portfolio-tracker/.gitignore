@@ -1,4 +1,6 @@
 backend/portfolio.db
+backend/profiles.json
+backend/profiles/
 __pycache__/
 *.pyc
 frontend/node_modules/

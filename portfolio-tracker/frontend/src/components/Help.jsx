@@ -17,6 +17,10 @@ const SECTIONS = [
           'Dashboard → Take snapshot. Do this monthly; it is what builds the trend.']],
       ['Just exploring?',
         ['Settings → Load demo data fills a realistic household. Clear demo data removes exactly those records again, leaving anything you added.']],
+      ['Showing it to someone else',
+        ['Settings → Profiles → create one with “fill it with demo data” ticked, then switch to it from the chip in the top bar. A profile is a completely separate portfolio, so none of your own numbers can appear on any screen.',
+          'The chip turns amber on a demo profile, so whose money is on screen is never a guess.',
+          'This separates data; it is not a lock. Anyone using the laptop can switch back, and the files are unencrypted on disk — protect the machine, not the tab.']],
     ],
   },
   {
@@ -131,7 +135,7 @@ const SECTIONS = [
     title: 'Privacy',
     body: [
       ['Where your data lives',
-        ['One SQLite file on this machine. No accounts, no cloud, no telemetry. Back up backend/portfolio.db.',
+        ['SQLite files on this machine. No accounts, no cloud, no telemetry. Back up backend/portfolio.db, and backend/profiles/ if you have made other profiles.',
           'Outbound requests go only to AMFI and Yahoo, for prices.',
           'There is no field anywhere for a password, PIN or security answer, and there will not be.']],
     ],

@@ -642,7 +642,7 @@ def refresh_prices():
     s = db()
     navs, by_isin, amfi_status = pricing.fetch_amfi()
     mf_updated = stock_updated = 0
-    failed, mf_failed = [], []
+    failed, mf_failed, mf_placeholders = [], [], []
     if navs:
         _amfi_cache["data"], _amfi_cache["at"] = navs, datetime.now()
         for h in s.query(Holding).filter(Holding.asset_class == "mutual_fund"):
@@ -661,7 +661,13 @@ def refresh_prices():
                         meta["folio"] = ident
                         h.meta = json.dumps(meta)
                     h.identifier = code
-            if info:
+            if info and analytics.is_unit_placeholder(
+                    service.holding_to_dict(h)):
+                # Pricing this would replace a value with a NAV and wipe out
+                # the holding. It is reported instead, and priced once the
+                # real unit count is in.
+                mf_placeholders.append(h.name)
+            elif info:
                 h.last_price, h.price_date = info["nav"], info["date"]
                 mf_updated += 1
             else:
@@ -691,6 +697,7 @@ def refresh_prices():
     return {"amfi_reachable": amfi_status == pricing.AMFI_OK,
             "amfi_status": amfi_status, "offline": config_mod.offline(),
             "mf_updated": mf_updated, "mf_failed": mf_failed,
+            "mf_placeholders": mf_placeholders,
             "stocks_updated": stock_updated, "stock_failed": failed,
             "stock_no_ticker": no_ticker, "reason": reason}
 
@@ -713,6 +720,57 @@ def _observed_nav(h):
     if (date.today() - h.price_date).days > OBSERVED_NAV_DAYS:
         return None                      # too old to say anything about today
     return price
+
+
+@app.get("/api/holdings/unit-placeholders")
+def list_unit_placeholders():
+    """Holdings recorded as one unit costing their whole invested amount.
+
+    Each needs the real unit count. Everything else about them -- what was
+    invested, which scheme -- is right, so the fix is one number per row.
+    """
+    s = db()
+    out = []
+    for h in s.query(Holding).all():
+        d = service.holding_to_dict(h)
+        if not analytics.is_unit_placeholder(d):
+            continue
+        out.append({"holding_id": h.id, "name": h.name,
+                    "asset_class": h.asset_class,
+                    "identifier": h.identifier or "",
+                    "invested": round(h.avg_cost or 0.0, 2),
+                    "last_price": round(h.last_price or 0.0, 4),
+                    "implied_units": (round((h.avg_cost or 0) / h.last_price, 4)
+                                      if h.last_price else None)})
+    s.close()
+    return {"holdings": out}
+
+
+@app.post("/api/holdings/set-units")
+def set_real_units(body: schemas.SetUnits):
+    """Replace a placeholder unit count with the real one.
+
+    The invested amount is the part that was never in doubt, so it is held
+    constant and the cost per unit is derived from it. Anything else would
+    silently rewrite what was actually put in.
+    """
+    s = db()
+    applied, errors = 0, []
+    for item in body.units:
+        h = s.get(Holding, item.holding_id)
+        if not h:
+            errors.append("holding %d no longer exists" % item.holding_id)
+            continue
+        invested = (h.avg_cost or 0.0) * (h.units or 0.0)
+        if item.units <= 0:
+            errors.append("%s: units must be above zero" % h.name)
+            continue
+        h.units = item.units
+        h.avg_cost = invested / item.units
+        applied += 1
+    s.commit()
+    s.close()
+    return {"applied": applied, "errors": errors}
 
 
 @app.get("/api/amfi/suggest-codes")
@@ -750,7 +808,7 @@ def apply_scheme_codes(body: schemas.ApplyCodes):
     """Set the chosen scheme code on each fund and price it straight away."""
     navs, _, status = _amfi_navs()
     s = db()
-    applied, errors = 0, []
+    applied, errors, derived = 0, [], []
     for item in body.assignments:
         h = s.get(Holding, item.holding_id)
         if not h:
@@ -768,11 +826,23 @@ def apply_scheme_codes(body: schemas.ApplyCodes):
             meta["folio"] = ident
             h.meta = json.dumps(meta)
         h.identifier = item.scheme_code
+        # A holding recorded as "1 unit costing the whole invested amount"
+        # carries its market value in last_price. Overwriting that with a
+        # NAV turns a five-lakh holding into two hundred rupees, so the
+        # units are derived from the value instead -- arithmetic on numbers
+        # the user gave us, not a guess.
+        if analytics.is_unit_placeholder(service.holding_to_dict(h)) \
+                and h.last_price and info["nav"]:
+            market_value = h.last_price
+            invested = h.avg_cost or 0.0
+            h.units = market_value / info["nav"]
+            h.avg_cost = invested / h.units if h.units else invested
+            derived.append(h.name)
         h.last_price, h.price_date = info["nav"], info["date"]
         applied += 1
     s.commit()
     s.close()
-    return {"applied": applied, "errors": errors}
+    return {"applied": applied, "errors": errors, "derived_units": derived}
 
 
 def _amfi_navs():

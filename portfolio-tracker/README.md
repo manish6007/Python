@@ -175,7 +175,8 @@ suggestions; and the net-worth trend built from monthly snapshots.
 
 Anything the app finds inconsistent appears here as a warning — an EMI with no
 loan behind it, holdings without a nominee, stale prices, a hybrid fund with
-no look-through split. These are **reported, never silently corrected**,
+no look-through split, a holding recorded as one unit costing its whole
+invested amount. These are **reported, never silently corrected**,
 because the app cannot know which side is right.
 
 ### Portfolio
@@ -399,7 +400,7 @@ misspelled field is rejected instead of silently ignored, and
 CI runs both, plus a frontend build, on every push touching
 `portfolio-tracker/` — see `.github/workflows/portfolio-tracker.yml`.
 
-233 tests. The pure analytics and FI modules, the importers, profiles,
+239 tests. The pure analytics and FI modules, the importers, profiles,
 privacy — and `test_api.py`, which goes through HTTP rather than around it,
 because the host check, the CORS configuration, profile selection from the
 cookie and the session lifecycle only exist on the request path.

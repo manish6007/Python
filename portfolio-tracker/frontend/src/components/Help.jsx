@@ -33,6 +33,7 @@ const SECTIONS = [
           'Your allocation against target, prioritised suggestions, and the net-worth trend from monthly snapshots.']],
       ['Warnings',
         ['Inconsistencies appear here: an EMI with no loan behind it, holdings without a nominee, stale prices, a hybrid fund with no look-through split.',
+          'Also a holding recorded as 1 unit costing its whole invested amount — what you get when the value was known but the unit count was not. It reads correctly until a real NAV arrives, and then one unit × ₹215 is ₹215. The Portfolio page asks for the real unit count and keeps what you invested unchanged; prices are left alone until you supply it, rather than wiping the holding out.',
           'These are reported, never silently corrected — the app cannot know which side is right.']],
     ],
   },

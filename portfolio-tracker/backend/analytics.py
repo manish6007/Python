@@ -30,6 +30,24 @@ UNIT_PRICED = {"mutual_fund", "stock", "gold_etf", "reit", "sgb", "nps",
 BALANCE_BASED = {"savings", "epf", "ppf", "other"}
 
 
+# A unit-priced holding entered as "one unit costing the whole invested
+# amount" -- which is what you get when the value is known but the unit count
+# is not. No Indian mutual fund or share has a unit price anywhere near this,
+# so a cost per unit above it, on exactly one unit, is a total wearing a
+# price's clothes. The moment a real NAV is attached, value collapses to the
+# NAV itself, so this has to be caught rather than quietly priced.
+PLACEHOLDER_UNIT_COST = 10000.0
+
+
+def is_unit_placeholder(h):
+    """True for a holding whose "1 unit" is really its whole value."""
+    if h.get("asset_class") not in UNIT_PRICED:
+        return False
+    units = h.get("units") or 0.0
+    return abs(units - 1.0) < 1e-9 and (h.get("avg_cost") or 0.0) \
+        >= PLACEHOLDER_UNIT_COST
+
+
 # How long a last-known balance may be extrapolated before the number owes
 # more to this formula than to reality. Beyond it the balance is held flat
 # and the user is asked for a fresh one.
@@ -317,6 +335,28 @@ def _stale_balances(ctx):
                    "extrapolating further, and contributions since then "
                    "are not included, so these read low: %s."
                    % (len(stale), MAX_ACCRUAL_MONTHS, _names(stale))}]
+
+
+@_check
+def _unit_placeholders(ctx):
+    """Holdings recorded as one unit costing the entire invested amount.
+
+    Harmless while the "price" is the market value, and catastrophic the
+    moment a real NAV lands on it: one unit times a NAV of 215 is 215, and
+    a five-lakh holding reads as a total loss.
+    """
+    placeholders = [h for h in ctx["holdings"] if is_unit_placeholder(h)]
+    if not placeholders:
+        return []
+    return [{
+        "level": "warning", "code": "unit_placeholder",
+        "message": "%d holding(s) are recorded as 1 unit costing %s — that "
+                   "is a total, not a price per unit, so their current value "
+                   "and profit are wrong. Enter the units you actually hold "
+                   "(your CAS has them) on the Portfolio page: %s."
+                   % (len(placeholders),
+                      inr(max(h.get("avg_cost") or 0 for h in placeholders)),
+                      _names(placeholders))}]
 
 
 @_check

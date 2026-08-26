@@ -263,6 +263,15 @@ class SettingsIn(Open):
     targets: Optional[Dict[str, float]] = None
 
 
+class UnitFix(Strict):
+    holding_id: int
+    units: float = Field(gt=0)
+
+
+class SetUnits(Strict):
+    units: List[UnitFix] = Field(default_factory=list)
+
+
 class CodeAssignment(Strict):
     holding_id: int
     scheme_code: str = Field(min_length=1, max_length=12)

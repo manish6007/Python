@@ -437,3 +437,83 @@ def test_a_purchase_price_is_not_treated_as_a_recent_nav(client, monkeypatch):
     row = client.get("/api/amfi/suggest-codes").json()["holdings"][0]
     assert row["compared_against"] is None
     assert row["confident"] is True
+
+
+# ---- "1 unit costing the whole invested amount" -------------------------
+# What you get when the value is known but the unit count is not. Harmless
+# while the "price" is the market value; the moment a real NAV lands on it,
+# one unit times 215 is 215 and a five-lakh holding reads as a total loss.
+def _placeholder(client, name="SBI Small Cap Fund", invested=294000,
+                 value=350000):
+    return client.post("/api/holdings", json={
+        "asset_class": "mutual_fund", "name": name, "units": 1,
+        "avg_cost": invested, "last_price": value}).json()
+
+
+def test_a_placeholder_holding_is_reported(client):
+    _placeholder(client)
+    codes = [w["code"] for w in client.get("/api/summary").json()["warnings"]]
+    assert "unit_placeholder" in codes
+
+
+def test_a_genuine_single_unit_holding_is_not_reported(client):
+    client.post("/api/holdings", json={
+        "asset_class": "mutual_fund", "name": "One unit", "units": 1,
+        "avg_cost": 215, "last_price": 240})
+    codes = [w["code"] for w in client.get("/api/summary").json()["warnings"]]
+    assert "unit_placeholder" not in codes
+
+
+def test_setting_the_real_units_keeps_the_invested_amount(client):
+    h = _placeholder(client)
+    r = client.post("/api/holdings/set-units", json={"units": [
+        {"holding_id": h["id"], "units": 1367.44}]}).json()
+    assert r["applied"] == 1 and r["errors"] == []
+    after = client.get("/api/holdings").json()[0]
+    assert after["units"] == 1367.44
+    assert round(after["invested"]) == 294000          # unchanged
+    assert round(after["avg_cost"], 4) == round(294000 / 1367.44, 4)
+
+
+def test_placeholders_are_listed_with_the_units_their_value_implies(client):
+    _placeholder(client, invested=294000, value=350000)
+    row = client.get("/api/holdings/unit-placeholders").json()["holdings"][0]
+    assert row["invested"] == 294000
+    assert row["last_price"] == 350000
+
+
+def test_a_refresh_will_not_price_a_placeholder_away(client, monkeypatch):
+    """Repricing it would replace a value with a NAV and wipe the holding."""
+    navs = _stub_amfi(monkeypatch, main)
+    code = next(c for c, i in navs.items()
+                if i["name"].startswith("DSP Midcap Fund - Direct"))
+    client.post("/api/holdings", json={
+        "asset_class": "mutual_fund", "name": "DSP Midcap Fund",
+        "identifier": code, "units": 1, "avg_cost": 363000,
+        "last_price": 420000})
+
+    body = client.post("/api/prices/refresh").json()
+    assert body["mf_updated"] == 0
+    assert body["mf_placeholders"] == ["DSP Midcap Fund"]
+    after = client.get("/api/holdings").json()[0]
+    assert after["current_value"] == 420000            # value survived
+
+
+def test_applying_a_code_derives_units_instead_of_destroying_the_value(
+        client, monkeypatch):
+    navs = _stub_amfi(monkeypatch, main)
+    h = _placeholder(client, name="DSP Midcap Fund", invested=363000,
+                     value=420000)
+    row = client.get("/api/amfi/suggest-codes").json()["holdings"][0]
+    code = row["candidates"][0]["code"]
+    nav = navs[code]["nav"]
+
+    r = client.post("/api/amfi/apply-codes", json={"assignments": [
+        {"holding_id": h["id"], "scheme_code": code}]}).json()
+    assert r["derived_units"] == ["DSP Midcap Fund"]
+
+    after = client.get("/api/holdings").json()[0]
+    assert round(after["units"], 4) == round(420000 / nav, 4)
+    assert round(after["current_value"]) == 420000     # value preserved
+    assert round(after["invested"]) == 363000          # and so is the cost
+    assert after["last_price"] == nav                  # now a real NAV

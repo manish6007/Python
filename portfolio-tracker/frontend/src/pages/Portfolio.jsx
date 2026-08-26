@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
 import { api, BUCKET_LABELS, inr } from '../api'
 import ImportWizard from './ImportWizard'
+import FixUnits from '../components/FixUnits'
 import SchemeCodes from '../components/SchemeCodes'
 
 const UNIT_CLASSES = ['mutual_fund', 'stock', 'gold_etf', 'reit', 'sgb', 'nps', 'gold_physical']
@@ -99,6 +100,12 @@ export default function Portfolio({ summary, meta, owners, reload }) {
             + ' matched — use Find AMFI scheme code below and put the code in'
             + ' Identifier.')
         }
+        if (r.mf_placeholders?.length) {
+          bits.push(`${r.mf_placeholders.length} fund(s) were left alone`
+            + ' because they are recorded as 1 unit costing the whole'
+            + ' invested amount — pricing those would wipe out their value.'
+            + ' Give them their real unit count above.')
+        }
         if (r.stock_failed?.length) {
           bits.push('no price for: ' + r.stock_failed.join(', ')
             + '. Check the ticker matches the NSE symbol.')
@@ -174,6 +181,8 @@ export default function Portfolio({ summary, meta, owners, reload }) {
       {msg && <div className="notice">{msg}</div>}
 
       <ImportWizard meta={meta} owners={owners} reload={reload} />
+
+      <FixUnits reload={reload} />
 
       <SchemeCodes reload={reload} />
 

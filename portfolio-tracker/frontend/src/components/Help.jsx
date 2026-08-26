@@ -1,0 +1,174 @@
+import { useEffect, useState } from 'react'
+
+/* The in-app half of the user guide. Mirrors README.md — keep the two in
+   step when a feature changes. */
+const SECTIONS = [
+  {
+    id: 'start',
+    title: 'Start here',
+    body: [
+      ['Set up, in about 20 minutes',
+        ['Settings → add your spouse and anyone else whose money you track.',
+          'Settings → enter your age and apply a suggested target allocation. Until you do, the dashboard is comparing you against placeholder numbers.',
+          'Settings → emergency-fund target, savings float, and whether the salary you enter is gross or net — the commonest reason a plan fails to reconcile.',
+          'Portfolio → add holdings, or import the CSV template in bulk.',
+          'Cashflow → one month of income and expenses, then your committed outflows once.',
+          'Loans and Insurance → add what applies.',
+          'Dashboard → Take snapshot. Do this monthly; it is what builds the trend.']],
+      ['Just exploring?',
+        ['Settings → Load demo data fills a realistic household. Clear demo data removes exactly those records again, leaving anything you added.']],
+    ],
+  },
+  {
+    id: 'dashboard',
+    title: 'Dashboard',
+    body: [
+      ['What it shows',
+        ['Net worth, assets, liabilities and monthly investible surplus.',
+          'Allocation by asset class and by owner — hover any bar to see which holdings are inside that bucket.',
+          'Your allocation against target, prioritised suggestions, and the net-worth trend from monthly snapshots.']],
+      ['Warnings',
+        ['Inconsistencies appear here: an EMI with no loan behind it, holdings without a nominee, stale prices, a hybrid fund with no look-through split.',
+          'These are reported, never silently corrected — the app cannot know which side is right.']],
+    ],
+  },
+  {
+    id: 'portfolio',
+    title: 'Portfolio',
+    body: [
+      ['Fields that do real work',
+        ['Identifier — AMFI scheme code for auto-NAV, NSE ticker for auto-price, or the folio/account number.',
+          'Bought on — enables the short-term vs long-term split on unrealised gains.',
+          'Maturity date (FDs) — an FD maturing within 12 months counts toward your emergency fund.',
+          'Nominee — flagged when missing; the commonest reason a family cannot claim.',
+          'Counts as — overrides the allocation bucket, e.g. a sweep FD filed under Cash.',
+          '⊞ split — divides one holding across buckets, for multi-asset funds whose gold and debt would otherwise be counted as equity.']],
+      ['Prices',
+        ['Refresh prices pulls MF NAVs from AMFI and stock prices from Yahoo. Give each holding its code or ticker first.']],
+    ],
+  },
+  {
+    id: 'cashflow',
+    title: 'Cashflow',
+    body: [
+      ['Enter costs as they are billed',
+        ['A ₹12,000 yearly subscription stays a yearly ₹12,000 — the app spreads it into a monthly equivalent.',
+          'The per-year column is the one that surprises people.',
+          'Add a next-due date to non-monthly items and they appear in the lumpy-bills warning.']],
+      ['Classify savings correctly',
+        ['Mark PF, NPS and ESOP as investments, not expenses, or your savings rate reads far too low.',
+          'Each card states what it is based on, e.g. "average of 3 months of entries".']],
+    ],
+  },
+  {
+    id: 'loans',
+    title: 'Loans & Insurance',
+    body: [
+      ['Loans',
+        ['Outstanding, rate, EMI and tenure, plus a prepay-vs-invest comparison: interest saved and months shaved, against the expected return on investing the same lump sum.']],
+      ['Insurance',
+        ['Cover, premium, renewal date and nominee, with gaps against conventional levels — 12× income plus outstanding debt for life, a family floor for health.',
+          'Premiums are held here for the reminder only; the committed outflows on Cashflow own the cashflow figure, so nothing is double-counted.']],
+    ],
+  },
+  {
+    id: 'fi',
+    title: 'Financial independence',
+    body: [
+      ['The two questions',
+        ['When do you reach your number — under 9%, 12% and 15% equity assumptions.',
+          'Whether it then lasts. The projection runs accumulation and drawdown on one timeline; a plan can reach FI and still run out.']],
+      ['Goals',
+        ['A goal is money withdrawn from the same corpus in a given year, each inflating at its own rate — education faster than groceries.',
+          'The page reports what your goals cost in FI years. That is the real price, and it may well be worth paying.']],
+      ['Reading the chart',
+        ['The target line rises because your expenses inflate. The band is the 9–15% range — the honest width of the forecast.',
+          "Today's money is the default view; nominal figures flatter the plan."]],
+    ],
+  },
+  {
+    id: 'export',
+    title: 'Export & family record',
+    body: [
+      ['AI review',
+        ['Copy AI review package puts a reviewer prompt plus your JSON on the clipboard — paste it into a Claude chat.',
+          'Privacy-safe mode (default) masks names and account numbers.',
+          'The export states its own data quality, so a reviewer asks instead of assuming.']],
+      ['Family record — off by default',
+        ['A sealed PDF (AES-256) listing every account, folio, policy and loan in full.',
+          'An open one-page locator sheet saying where the sealed file is kept and who holds the password, listing institutions with no numbers on it.',
+          'Neither contains a username, password or security answer. This exists so a family can claim what is theirs, not so an account can be logged into.',
+          'Where you keep it matters more than the cipher: a locker or a password manager, not email or chat.']],
+    ],
+  },
+  {
+    id: 'numbers',
+    title: 'How the numbers work',
+    body: [
+      ['Assumptions, all editable',
+        ['Income and expenses are averaged over the months that actually carry entries, not a fixed window.',
+          'Expenses exclude EMI and include recurring costs — which is also what post-FI spending looks like.',
+          'FI target defaults to 30× expenses; the 25× (4%) rule is US-derived and Indian inflation is higher.',
+          'Each bucket compounds at its own rate; only equity moves across scenarios.',
+          'Long-term capital gains use a simplified rule: 12 months for listed equity and equity funds, 24 otherwise. Confirm with a CA.']],
+      ['What it will not do',
+        ['A projection is not a prediction. It assumes steady returns; real markets deliver the same average through crashes and booms.',
+          'Suggestions are deliberately generic — asset-class level, never specific products. This is not investment advice.']],
+    ],
+  },
+  {
+    id: 'privacy',
+    title: 'Privacy',
+    body: [
+      ['Where your data lives',
+        ['One SQLite file on this machine. No accounts, no cloud, no telemetry. Back up backend/portfolio.db.',
+          'Outbound requests go only to AMFI and Yahoo, for prices.',
+          'There is no field anywhere for a password, PIN or security answer, and there will not be.']],
+    ],
+  },
+]
+
+export default function Help({ onClose }) {
+  const [active, setActive] = useState(SECTIONS[0].id)
+
+  useEffect(() => {
+    const esc = (e) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', esc)
+    return () => window.removeEventListener('keydown', esc)
+  }, [onClose])
+
+  const section = SECTIONS.find((s) => s.id === active) || SECTIONS[0]
+
+  return (
+    <div className="help-overlay" onClick={onClose}>
+      <div className="help-panel" onClick={(e) => e.stopPropagation()}
+        role="dialog" aria-label="User guide">
+        <div className="help-head">
+          <h1 style={{ fontSize: 18 }}>User guide</h1>
+          <button className="btn secondary" onClick={onClose}>Close ✕</button>
+        </div>
+        <div className="help-body">
+          <nav className="help-nav">
+            {SECTIONS.map((s) => (
+              <button key={s.id}
+                className={s.id === active ? 'active' : ''}
+                onClick={() => setActive(s.id)}>{s.title}</button>
+            ))}
+          </nav>
+          <div className="help-content">
+            <h2 style={{ fontSize: 16 }}>{section.title}</h2>
+            {section.body.map(([heading, points]) => (
+              <div key={heading} style={{ marginBottom: 18 }}>
+                <b>{heading}</b>
+                <ul>{points.map((t, i) => <li key={i}>{t}</li>)}</ul>
+              </div>
+            ))}
+            <p className="small muted">
+              The same guide, in more detail, is in README.md.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}

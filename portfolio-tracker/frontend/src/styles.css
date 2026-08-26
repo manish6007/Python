@@ -152,3 +152,47 @@ pre.export {
 .legend { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 6px; }
 .legend span { display: inline-flex; align-items: center; gap: 6px; color: var(--text-secondary); font-size: 12px; }
 .legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+
+/* ---- in-app user guide ---- */
+.help-overlay {
+  position: fixed; inset: 0; z-index: 100;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex; align-items: center; justify-content: center; padding: 20px;
+}
+.help-panel {
+  background: var(--surface-1); border: 1px solid var(--border);
+  border-radius: 14px; width: min(980px, 100%); max-height: 90vh;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.help-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 18px; border-bottom: 1px solid var(--border);
+}
+.help-body { display: flex; min-height: 0; flex: 1; }
+.help-nav {
+  display: flex; flex-direction: column; gap: 2px; padding: 12px;
+  border-right: 1px solid var(--border); min-width: 190px;
+  overflow-y: auto;
+}
+.help-nav button {
+  background: none; border: none; text-align: left; font: inherit;
+  color: var(--text-secondary); padding: 8px 10px; border-radius: 8px;
+  cursor: pointer;
+}
+.help-nav button:hover { background: var(--grid); }
+.help-nav button.active { background: var(--accent); color: #fff; }
+.help-content { padding: 16px 20px; overflow-y: auto; flex: 1; }
+.help-content ul { margin: 6px 0 0; padding-left: 20px; }
+.help-content li { margin-bottom: 6px; color: var(--text-secondary); }
+button.info {
+  background: none; border: 1px solid var(--baseline); color: var(--text-secondary);
+  width: 28px; height: 28px; border-radius: 50%; cursor: pointer;
+  font-size: 14px; line-height: 1; display: inline-flex;
+  align-items: center; justify-content: center; flex: none;
+}
+button.info:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+@media (max-width: 700px) {
+  .help-body { flex-direction: column; }
+  .help-nav { flex-direction: row; overflow-x: auto; border-right: none;
+    border-bottom: 1px solid var(--border); min-width: 0; }
+}

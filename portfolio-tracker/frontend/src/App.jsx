@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from './api'
+import Help from './components/Help'
 import Cashflow from './pages/Cashflow'
 import Dashboard from './pages/Dashboard'
 import ExportPage from './pages/ExportPage'
@@ -17,6 +18,7 @@ export default function App() {
   const [meta, setMeta] = useState(null)
   const [owners, setOwners] = useState([])
   const [error, setError] = useState('')
+  const [help, setHelp] = useState(false)
 
   const reload = useCallback(async () => {
     try {
@@ -39,6 +41,8 @@ export default function App() {
     <>
       <header className="topbar">
         <h1>💰 Portfolio Tracker</h1>
+        <button className="info" title="User guide" aria-label="User guide"
+          onClick={() => setHelp(true)}>ⓘ</button>
         <nav>
           {TABS.map((t) => (
             <button key={t} className={t === tab ? 'active' : ''}
@@ -46,6 +50,7 @@ export default function App() {
           ))}
         </nav>
       </header>
+      {help && <Help onClose={() => setHelp(false)} />}
       <main className="page">
         {error && <div className="notice">{error}</div>}
         {!summary || !meta ? (!error && <p className="muted">Loading…</p>) : (

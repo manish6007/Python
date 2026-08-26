@@ -392,3 +392,57 @@ def test_refresh_prices_names_the_funds_it_could_not_price(tmp_path,
         {}, pricing.AMFI_OK))
     out = main.refresh_prices()
     assert out["mf_updated"] == 0 and out["mf_failed"] == ["Some Fund"]
+
+
+# ---- units are the quantity, never a placeholder ------------------------
+def test_units_are_derived_when_a_file_reports_only_money():
+    """A "1 unit costing the whole invested amount" placeholder reads
+    correctly until a real price arrives, then collapses to that price."""
+    recs = [{"Name": "SBI Small Cap", "Invested": "2,94,000",
+             "Cur. val": "3,50,000", "Avg. cost": "215.00", "LTP": ""}]
+    mapping = imp.sniff_columns(["Name", "Invested", "Cur. val",
+                                 "Avg. cost", "LTP"])
+    rows, skipped = imp.build_rows(recs, mapping, asset_class="mutual_fund")
+    assert not skipped
+    assert rows[0]["units"] == round(294000 / 215.0, 4)
+
+
+def test_units_come_from_value_over_price_when_that_is_what_is_given():
+    recs = [{"Name": "DSP Midcap", "Invested": "3,63,000",
+             "Cur. val": "4,20,000", "Avg. cost": "", "LTP": "178.00"}]
+    mapping = imp.sniff_columns(["Name", "Invested", "Cur. val",
+                                 "Avg. cost", "LTP"])
+    rows, _ = imp.build_rows(recs, mapping, asset_class="mutual_fund")
+    assert rows[0]["units"] == round(420000 / 178.0, 4)
+    # and the cost per unit follows from the units, not the other way round
+    assert round(rows[0]["avg_cost"] * rows[0]["units"]) == 363000
+
+
+def test_every_imported_row_is_internally_consistent():
+    """invested == units x avg_cost, and value == units x price. Without
+    that, a price refresh silently changes what the holding is worth."""
+    recs = [
+        {"Name": "A", "Invested": "2,94,000", "Cur. val": "3,50,000",
+         "Avg. cost": "215.00", "LTP": "", "Qty.": ""},
+        {"Name": "B", "Invested": "3,63,000", "Cur. val": "4,20,000",
+         "Avg. cost": "", "LTP": "178.00", "Qty.": ""},
+        {"Name": "C", "Invested": "", "Cur. val": "", "Avg. cost": "215",
+         "LTP": "256", "Qty.": "1367.44"},
+    ]
+    mapping = imp.sniff_columns(["Name", "Invested", "Cur. val",
+                                 "Avg. cost", "LTP", "Qty."])
+    rows, _ = imp.build_rows(recs, mapping, asset_class="mutual_fund")
+    assert len(rows) == 3
+    for r in rows:
+        assert abs(r["units"] * r["avg_cost"] - r["invested"]) < 1, r["name"]
+        assert abs(r["units"] * r["last_price"]
+                   - r["current_value"]) < 1, r["name"]
+
+
+def test_a_row_with_no_way_to_reach_units_is_reported_not_invented():
+    recs = [{"Name": "Nothing", "Invested": "", "Cur. val": "",
+             "Avg. cost": "", "LTP": ""}]
+    mapping = imp.sniff_columns(["Name", "Invested", "Cur. val",
+                                 "Avg. cost", "LTP"])
+    rows, skipped = imp.build_rows(recs, mapping, asset_class="mutual_fund")
+    assert rows == [] and "no quantity" in skipped[0]

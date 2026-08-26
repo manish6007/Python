@@ -361,13 +361,31 @@ def delete_holding(hid: int):
     return {"ok": True}
 
 
+def _price_for_row(row, navs):
+    """The per-unit price for a template row, from the file or from AMFI.
+
+    A scheme code is enough: the NAV is already downloaded, so nobody has to
+    type a price in beside it.
+    """
+    given = float(row.get("last_price") or 0)
+    if given:
+        return given
+    info = navs.get(str(row.get("identifier") or "").strip())
+    return info["nav"] if info else 0.0
+
+
 @app.post("/api/holdings/import")
 async def import_holdings(file: UploadFile):
     s = db()
     text = (await file.read()).decode("utf-8-sig")
     reader = csv.DictReader(io.StringIO(text))
     owners = {o.name: o.id for o in s.query(Owner).all()}
-    added, errors = 0, []
+    # Fetched once for the whole file, so a row carrying a scheme code needs
+    # no price and no unit count -- what it cost and what it is worth are
+    # enough, and those are the two numbers people can actually read off a
+    # screen.
+    navs, _, _ = _amfi_navs()
+    added, errors, derived = 0, [], 0
     for i, r in enumerate(reader):
         try:
             oname = (r.get("owner") or "Me").strip()
@@ -379,12 +397,24 @@ async def import_holdings(file: UploadFile):
             cls = (r.get("asset_class") or "").strip()
             if cls not in ASSET_CLASSES:
                 raise ValueError("bad asset_class %r" % cls)
+            units, avg_cost = float(r.get("units") or 0), \
+                float(r.get("avg_cost") or 0)
+            price = 0.0
+            if cls in analytics.UNIT_PRICED:
+                price = _price_for_row(r, navs)
+                before = units
+                units, avg_cost, price = imp_mod.derive_quantities(
+                    units, avg_cost, price,
+                    float(r.get("invested") or 0),
+                    float(r.get("current_value") or 0))
+                units, avg_cost = units or 0.0, avg_cost or 0.0
+                if units and not before:
+                    derived += 1
             h = Holding(
                 owner_id=owners[oname], asset_class=cls,
                 name=(r.get("name") or "").strip(),
                 identifier=(r.get("identifier") or "").strip(),
-                units=float(r.get("units") or 0),
-                avg_cost=float(r.get("avg_cost") or 0),
+                units=units, avg_cost=avg_cost,
                 manual_value=float(r.get("manual_value") or 0),
                 rate=float(r.get("rate") or 0),
                 start_date=parse_date((r.get("start_date") or "").strip()),
@@ -398,8 +428,13 @@ async def import_holdings(file: UploadFile):
                         ("nominee", (r.get("nominee") or "").strip()),
                     ) if v}))
             if cls in analytics.UNIT_PRICED:
-                h.last_price = float(r.get("last_price") or 0) or h.avg_cost
+                h.last_price = price or h.avg_cost
                 h.price_date = date.today()
+                if not h.units:
+                    raise ValueError(
+                        "no units, and none could be worked out. Give units, "
+                        "or give current_value with either last_price or an "
+                        "identifier AMFI prices.")
             if not h.name:
                 raise ValueError("name required")
             s.add(h)
@@ -408,7 +443,8 @@ async def import_holdings(file: UploadFile):
             errors.append("row %d: %s" % (i + 2, ex))
     s.commit()
     s.close()
-    return {"added": added, "errors": errors}
+    return {"added": added, "errors": errors,
+            "units_derived": derived}
 
 
 # ---------------- guided import ----------------
@@ -735,13 +771,16 @@ def list_unit_placeholders():
         d = service.holding_to_dict(h)
         if not analytics.is_unit_placeholder(d):
             continue
+        price = h.last_price or 0.0
+        # A price that is still the holding's whole value cannot turn a
+        # value into units -- dividing a value by itself gives 1 back.
+        priceable = bool(price) and price < analytics.PLACEHOLDER_UNIT_COST
         out.append({"holding_id": h.id, "name": h.name,
                     "asset_class": h.asset_class,
                     "identifier": h.identifier or "",
                     "invested": round(h.avg_cost or 0.0, 2),
-                    "last_price": round(h.last_price or 0.0, 4),
-                    "implied_units": (round((h.avg_cost or 0) / h.last_price, 4)
-                                      if h.last_price else None)})
+                    "last_price": round(price, 4),
+                    "priceable": priceable})
     s.close()
     return {"holdings": out}
 
@@ -762,11 +801,25 @@ def set_real_units(body: schemas.SetUnits):
             errors.append("holding %d no longer exists" % item.holding_id)
             continue
         invested = (h.avg_cost or 0.0) * (h.units or 0.0)
-        if item.units <= 0:
-            errors.append("%s: units must be above zero" % h.name)
-            continue
-        h.units = item.units
-        h.avg_cost = invested / item.units
+        units = item.units
+        if units is None:
+            # What it is worth today, divided by today's price. Easier to
+            # find than a unit count, and exactly as accurate -- but only
+            # once the recorded price is a real per-unit price. While it is
+            # still the holding's whole value, dividing by it just gives 1
+            # back, so that is refused rather than quietly done.
+            price = h.last_price or 0.0
+            if not price or price >= analytics.PLACEHOLDER_UNIT_COST:
+                errors.append(
+                    "%s: its recorded price of %s is a total, not a price "
+                    "per unit, so units cannot be worked out from a value. "
+                    "Give it a scheme code first so it has a real NAV, or "
+                    "enter the units directly."
+                    % (h.name, analytics.inr(price)))
+                continue
+            units = item.current_value / price
+        h.units = units
+        h.avg_cost = invested / units if units else invested
         applied += 1
     s.commit()
     s.close()

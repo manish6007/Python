@@ -34,6 +34,13 @@ your holdings and your spouse's together or apart. Mutual-fund NAVs refresh
 from AMFI and stock prices from Yahoo, with a built-in AMFI scheme-code
 search.
 
+**You never have to type a unit count.** Units are what the app stores —
+invested is units × cost, current value is units × price — but nobody reads
+unit counts off a screen. So give it the two numbers your fund app shows you,
+**what it cost and what it is worth**, and the units are worked out from the
+price. That applies to the CSV template, the guided import and repairing an
+existing holding alike.
+
 **Import instead of typing.** Upload a broker export exactly as it downloads —
 Zerodha, Groww, Upstox, Angel One, ICICI Direct and most others, CSV or XLSX.
 The column headings brokers use are recognised automatically, the guessed
@@ -400,7 +407,7 @@ misspelled field is rejected instead of silently ignored, and
 CI runs both, plus a frontend build, on every push touching
 `portfolio-tracker/` — see `.github/workflows/portfolio-tracker.yml`.
 
-239 tests. The pure analytics and FI modules, the importers, profiles,
+251 tests. The pure analytics and FI modules, the importers, profiles,
 privacy — and `test_api.py`, which goes through HTTP rather than around it,
 because the host check, the CORS configuration, profile selection from the
 cookie and the session lifecycle only exist on the request path.

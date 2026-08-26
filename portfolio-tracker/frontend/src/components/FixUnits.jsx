@@ -6,11 +6,17 @@ import { api, inr } from '../api'
  * That shape comes from knowing what a holding is worth but not how many
  * units it is. It reads correctly until a real NAV arrives, and then one
  * unit times a NAV of ₹215 is ₹215 — a five-lakh holding shown as a total
- * loss. Only the unit count is missing, so that is all this asks for.
+ * loss.
+ *
+ * Units are the quantity the app stores; invested and current value are
+ * products of it. So either number repairs a holding — the unit count, or
+ * simply what it is worth today, since units = value ÷ price. The second is
+ * the one people can actually read off a screen.
  */
 export default function FixUnits({ reload }) {
   const [rows, setRows] = useState(null)
   const [units, setUnits] = useState({})
+  const [values, setValues] = useState({})
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
 
@@ -18,17 +24,25 @@ export default function FixUnits({ reload }) {
     .then((r) => setRows(r.holdings)).catch(() => {})
   useEffect(() => { load() }, [])
 
+  const entries = (rows || []).map((r) => {
+    const u = +units[r.holding_id] || 0
+    const v = +values[r.holding_id] || 0
+    if (u > 0) return { holding_id: r.holding_id, units: u }
+    if (v > 0 && r.priceable) {
+      return { holding_id: r.holding_id, current_value: v }
+    }
+    return null
+  }).filter(Boolean)
+
   const apply = async () => {
-    const payload = Object.entries(units)
-      .filter(([, u]) => +u > 0)
-      .map(([id, u]) => ({ holding_id: +id, units: +u }))
+    const payload = entries
     if (!payload.length) return
     setBusy(true)
     try {
       const r = await api.post('/api/holdings/set-units', { units: payload })
       setMsg(`Set the unit count on ${r.applied} holding(s).`
         + (r.errors.length ? ' Problems: ' + r.errors.join('; ') : ''))
-      setUnits({})
+      setUnits({}); setValues({})
       await load()
       reload()
     } catch (e) { setMsg(e.message) }
@@ -36,7 +50,7 @@ export default function FixUnits({ reload }) {
   }
 
   if (!rows || !rows.length) return null
-  const ready = Object.values(units).filter((u) => +u > 0).length
+  const ready = entries.length
 
   return (
     <div className="card">
@@ -45,14 +59,19 @@ export default function FixUnits({ reload }) {
         These are recorded as <b>1 unit costing the whole invested amount</b> —
         what you get when the value was known but the unit count was not. It
         looks right until a real NAV arrives, and then one unit × ₹215 is
-        ₹215, so the holding reads as a near-total loss. <b>Your CAS has the
-        exact units</b> (“Closing Unit Balance”), as does your fund app.
+        ₹215, so the holding reads as a near-total loss.
+      </p>
+      <p className="small muted">
+        Fill in <b>either</b> column: the units you hold (your CAS calls it
+        “Closing Unit Balance”), <b>or</b> just what the holding is worth
+        today — read that off your fund app and the units follow from the
+        price. Whichever is easier.
       </p>
       <table className="data">
         <thead><tr>
           <th>Holding</th><th className="num">Invested</th>
           <th className="num">Price now</th><th>Units you hold</th>
-          <th className="num">Would be worth</th>
+          <th>…or value today</th><th className="num">Would be worth</th>
         </tr></thead>
         <tbody>
           {rows.map((r) => {
@@ -71,8 +90,23 @@ export default function FixUnits({ reload }) {
                     onChange={(e) => setUnits({
                       ...units, [r.holding_id]: e.target.value })} />
                 </td>
+                <td>
+                  {r.priceable ? (
+                    <input type="number" step="any" style={{ width: 130 }}
+                      placeholder="e.g. 350000" disabled={u > 0}
+                      value={values[r.holding_id] || ''}
+                      onChange={(e) => setValues({
+                        ...values, [r.holding_id]: e.target.value })} />
+                  ) : (
+                    <span className="small muted">
+                      needs a real NAV first — give it a scheme code below
+                    </span>
+                  )}
+                </td>
                 <td className="num">
-                  {u > 0 && r.last_price ? inr(u * r.last_price) : '—'}
+                  {u > 0 && r.last_price ? inr(u * r.last_price)
+                    : (+values[r.holding_id] > 0 && r.priceable
+                      ? inr(+values[r.holding_id]) : '—')}
                 </td>
               </tr>
             )

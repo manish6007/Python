@@ -162,19 +162,26 @@ export default function Portfolio({ summary, meta, owners, reload }) {
     fd.append('file', f)
     try {
       const r = await api.post('/api/holdings/import', fd)
-      setMsg(`Imported ${r.added} holdings.` +
-        (r.errors.length ? ' Skipped: ' + r.errors.join('; ') : ''))
+      setMsg(`Imported ${r.added} holdings.`
+        + (r.units_derived
+          ? ` Units were worked out from the price for ${r.units_derived}`
+            + ' of them.' : '')
+        + (r.errors.length ? ' Skipped: ' + r.errors.join('; ') : ''))
       reload()
     } catch (err) { setMsg('Import error: ' + err.message) }
     fileRef.current.value = ''
   }
 
-  const template = 'owner,asset_class,name,identifier,units,avg_cost,manual_value,last_price,rate,start_date,category,bucket,maturity_date,purchase_date,nominee\n' +
-    'Me,mutual_fund,Parag Parikh Flexi Cap Dir-G,122639,512.33,55.1,0,81.2,0,,equity,,,2023-04-10,\n' +
-    'Me,stock,Reliance Industries,RELIANCE,10,2400,0,2950,0,,,,,2024-11-02,\n' +
-    'Wife,fd,HDFC sweep FD,XXXX1234,0,500000,0,0,7.1,2025-01-15,,cash,2026-01-15,,\n' +
-    'Me,fd,SBI 5yr tax saver FD,XXXX9911,0,150000,0,0,7.0,2024-03-01,,,2029-03-01,,\n' +
-    'Me,ppf,SBI PPF,,0,0,450000,0,7.1,,,,,,\n'
+  // units and avg_cost can be left blank: give what it cost and what it is
+  // worth, and the units follow from the price. That is the pair anyone can
+  // read off their fund app; unit counts are buried in a statement.
+  const template = 'owner,asset_class,name,identifier,invested,current_value,units,avg_cost,manual_value,last_price,rate,start_date,category,bucket,maturity_date,purchase_date,nominee\n' +
+    'Me,mutual_fund,Parag Parikh Flexi Cap Dir-G,122639,28250,41615,,,0,,0,,equity,,,2023-04-10,\n' +
+    'Me,mutual_fund,Axis ELSS Tax Saver Dir-G,120503,537000,874595,,,0,,0,,elss,,,,\n' +
+    'Me,stock,Reliance Industries,RELIANCE,24000,29500,10,2400,0,2950,0,,,,,2024-11-02,\n' +
+    'Wife,fd,HDFC sweep FD,XXXX1234,,,0,500000,0,0,7.1,2025-01-15,,cash,2026-01-15,,\n' +
+    'Me,fd,SBI 5yr tax saver FD,XXXX9911,,,0,150000,0,0,7.0,2024-03-01,,,2029-03-01,,\n' +
+    'Me,ppf,SBI PPF,,,,0,0,450000,0,7.1,,,,,,\n'
 
   return (
     <div className="grid">
@@ -488,10 +495,20 @@ export default function Portfolio({ summary, meta, owners, reload }) {
       <div className="card">
         <h2>Bulk import (CSV)</h2>
         <p className="small muted">
-          Columns: owner, asset_class, name, identifier, units, avg_cost,
-          manual_value, last_price, rate, start_date, category, bucket,
-          maturity_date, purchase_date, nominee. Dates are YYYY-MM-DD; bucket
-          overrides the allocation bucket (blank = automatic).
+          For funds and shares, the easy way is to fill in{' '}
+          <b>identifier</b> (AMFI scheme code or NSE symbol),{' '}
+          <b>invested</b> and <b>current_value</b>, and leave{' '}
+          <b>units</b> and <b>avg_cost</b> blank — the app looks up the price
+          and works the units out from them. Those are the two numbers your
+          fund app shows you; unit counts are buried in a statement.
+        </p>
+        <p className="small muted">
+          Full column list: owner, asset_class, name, identifier, invested,
+          current_value, units, avg_cost, manual_value, last_price, rate,
+          start_date, category, bucket, maturity_date, purchase_date,
+          nominee. Deposits and balances use manual_value or avg_cost with a
+          rate instead. Dates are YYYY-MM-DD; bucket overrides the allocation
+          bucket (blank = automatic).
         </p>
         <div className="row">
           <a className="btn secondary" style={{ textDecoration: 'none' }}

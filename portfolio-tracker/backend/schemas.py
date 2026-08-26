@@ -264,8 +264,21 @@ class SettingsIn(Open):
 
 
 class UnitFix(Strict):
+    """Give the units, or the value they are currently worth.
+
+    Nobody reads unit counts off a screen, but everybody can see what a
+    holding is worth today. units = value / NAV is arithmetic, so asking for
+    whichever number is to hand costs nothing.
+    """
     holding_id: int
-    units: float = Field(gt=0)
+    units: Optional[float] = Field(default=None, gt=0)
+    current_value: Optional[float] = Field(default=None, gt=0)
+
+    @model_validator(mode="after")
+    def check(self):
+        if self.units is None and self.current_value is None:
+            raise ValueError("give either the units or the current value")
+        return self
 
 
 class SetUnits(Strict):

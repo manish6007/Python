@@ -517,3 +517,123 @@ def test_applying_a_code_derives_units_instead_of_destroying_the_value(
     assert round(after["current_value"]) == 420000     # value preserved
     assert round(after["invested"]) == 363000          # and so is the cost
     assert after["last_price"] == nav                  # now a real NAV
+
+
+def test_units_can_be_given_as_the_value_they_are_worth(client):
+    """Nobody reads unit counts off a screen; everybody can see a value."""
+    h = _placeholder(client, name="SBI Small Cap Fund", invested=294000,
+                     value=215)            # already flattened by a NAV
+    r = client.post("/api/holdings/set-units", json={"units": [
+        {"holding_id": h["id"], "current_value": 350000}]}).json()
+    assert r["applied"] == 1
+
+    after = client.get("/api/holdings").json()[0]
+    assert round(after["units"], 4) == round(350000 / 215, 4)
+    assert round(after["current_value"]) == 350000
+    assert round(after["invested"]) == 294000          # untouched
+
+
+def test_a_value_cannot_become_units_while_the_price_is_still_a_total(client):
+    """Dividing a value by itself gives 1 back, which is the bug, not a fix."""
+    h = _placeholder(client, name="Not yet priced", invested=294000,
+                     value=350000)         # "price" is the whole value
+    r = client.post("/api/holdings/set-units", json={"units": [
+        {"holding_id": h["id"], "current_value": 350000}]}).json()
+    assert r["applied"] == 0
+    assert "is a total, not a price per unit" in r["errors"][0]
+
+    # Entering the units directly still works, because that needs no price.
+    r = client.post("/api/holdings/set-units", json={"units": [
+        {"holding_id": h["id"], "units": 1367.44}]}).json()
+    assert r["applied"] == 1
+
+
+def test_set_units_needs_one_of_the_two_numbers(client):
+    h = _placeholder(client)
+    r = client.post("/api/holdings/set-units",
+                    json={"units": [{"holding_id": h["id"]}]})
+    assert r.status_code == 422
+    assert "either the units or the current value" in r.json()["detail"]
+
+
+# ---- the template: give money, get units --------------------------------
+TEMPLATE_HEAD = ("owner,asset_class,name,identifier,invested,current_value,"
+                 "units,avg_cost,manual_value,last_price,rate,start_date,"
+                 "category,bucket,maturity_date,purchase_date,nominee\n")
+
+
+def test_the_template_works_out_units_from_the_nav(client, monkeypatch):
+    """Typing unit counts is the tedious part, and they are derivable:
+    what it is worth, divided by today's price."""
+    navs = _stub_amfi(monkeypatch, main)
+    code, nav = next((c, i["nav"]) for c, i in navs.items()
+                     if i["name"].startswith("DSP Midcap Fund - Direct"))
+    csv = TEMPLATE_HEAD + (
+        "Me,mutual_fund,DSP Midcap Fund,%s,363000,490050,,,0,,0,,equity,,,,\n"
+        % code)
+
+    r = client.post("/api/holdings/import",
+                    files={"file": ("h.csv", csv, "text/csv")}).json()
+    assert r["added"] == 1 and r["errors"] == []
+    assert r["units_derived"] == 1
+
+    h = client.get("/api/holdings").json()[0]
+    assert round(h["units"], 4) == round(490050 / nav, 4)
+    assert round(h["invested"]) == 363000            # what was put in
+    assert round(h["current_value"]) == 490050       # what it is worth
+    assert h["last_price"] == nav
+
+
+def test_derived_units_survive_a_price_refresh(client, monkeypatch):
+    """Value must follow units x NAV, not be a number stored beside them."""
+    navs = _stub_amfi(monkeypatch, main)
+    code = next(c for c, i in navs.items()
+                if i["name"].startswith("DSP Midcap Fund - Direct"))
+    csv = TEMPLATE_HEAD + (
+        "Me,mutual_fund,DSP Midcap Fund,%s,363000,490050,,,0,,0,,equity,,,,\n"
+        % code)
+    client.post("/api/holdings/import",
+                files={"file": ("h.csv", csv, "text/csv")})
+
+    body = client.post("/api/prices/refresh").json()
+    assert body["mf_updated"] == 1 and body["mf_placeholders"] == []
+    h = client.get("/api/holdings").json()[0]
+    assert abs(h["units"] * h["last_price"] - h["current_value"]) < 1
+    assert abs(h["units"] * h["avg_cost"] - h["invested"]) < 1
+
+
+def test_a_template_row_with_an_explicit_price_needs_no_lookup(client,
+                                                               monkeypatch):
+    _stub_amfi(monkeypatch, main)
+    csv = TEMPLATE_HEAD + (
+        "Me,stock,Reliance,RELIANCE,24000,29500,,,0,2950,0,,,,,,\n")
+    r = client.post("/api/holdings/import",
+                    files={"file": ("h.csv", csv, "text/csv")}).json()
+    assert r["added"] == 1
+    h = client.get("/api/holdings").json()[0]
+    assert h["units"] == 10.0                        # 29500 / 2950
+    assert round(h["avg_cost"]) == 2400              # 24000 / 10
+
+
+def test_a_template_row_with_no_route_to_units_is_refused(client,
+                                                          monkeypatch):
+    """Better to reject the row than store a placeholder that breaks later."""
+    _stub_amfi(monkeypatch, main)
+    csv = TEMPLATE_HEAD + (
+        "Me,mutual_fund,Mystery Fund,,363000,490050,,,0,,0,,equity,,,,\n")
+    r = client.post("/api/holdings/import",
+                    files={"file": ("h.csv", csv, "text/csv")}).json()
+    assert r["added"] == 0
+    assert "none could be worked out" in r["errors"][0]
+    assert client.get("/api/holdings").json() == []
+
+
+def test_units_given_explicitly_are_still_respected(client, monkeypatch):
+    _stub_amfi(monkeypatch, main)
+    csv = TEMPLATE_HEAD + (
+        "Me,stock,Reliance,RELIANCE,,,10,2400,0,2950,0,,,,,,\n")
+    r = client.post("/api/holdings/import",
+                    files={"file": ("h.csv", csv, "text/csv")}).json()
+    assert r["added"] == 1 and r["units_derived"] == 0
+    h = client.get("/api/holdings").json()[0]
+    assert h["units"] == 10.0 and h["avg_cost"] == 2400

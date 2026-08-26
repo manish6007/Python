@@ -171,6 +171,39 @@ def _read_xlsx(data):
     return headers, out
 
 
+def derive_quantities(units=None, avg_cost=None, last_price=None,
+                      invested=None, current_value=None):
+    """Fill in whichever of units / cost / price is missing.
+
+    Units are the quantity the app stores; invested and current value are
+    products of it. But nobody reads unit counts off a screen -- what people
+    can see is what a holding cost and what it is worth. So given a price,
+    units follow from the value, and the cost per unit follows from the
+    invested amount. Returns (units, avg_cost, last_price).
+
+    Order matters: units first, because the per-unit figures are derived
+    from them. Deriving cost per unit first and units after produced a cost
+    of zero for any row that reported only money.
+    """
+    units = units or None
+    avg_cost = avg_cost or None
+    last_price = last_price or None
+    invested = invested or None
+    current_value = current_value or None
+
+    if not units:
+        if current_value and last_price:
+            units = current_value / last_price
+        elif invested and avg_cost:
+            units = invested / avg_cost
+    if units:
+        if not avg_cost and invested:
+            avg_cost = invested / units
+        if not last_price and current_value:
+            last_price = current_value / units
+    return units, avg_cost, (last_price or avg_cost)
+
+
 def build_rows(records, mapping, asset_class="stock", owner="Me"):
     """Apply a mapping to raw records and derive what is missing.
 
@@ -192,19 +225,17 @@ def build_rows(records, mapping, asset_class="stock", owner="Me"):
         invested = to_number(val("invested"))
         current = to_number(val("current_value"))
 
-        if units and not avg and invested:
-            avg = invested / units
-        if units and not last and current:
-            last = current / units
-        if not last:
-            last = avg
+        units, avg, last = derive_quantities(units, avg, last, invested,
+                                             current)
 
         if not name:
             skipped.append("row %d: no name or symbol" % (i + 2))
             continue
         if not units or units <= 0:
-            skipped.append("row %d (%s): quantity is %s" %
-                           (i + 2, name[:30], val("units") or "missing"))
+            skipped.append(
+                "row %d (%s): no quantity, and none could be worked out — "
+                "a value needs a price beside it, or an invested amount "
+                "needs an average cost." % (i + 2, name[:30]))
             continue
 
         ident = str(val("identifier") or "").strip()

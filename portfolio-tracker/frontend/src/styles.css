@@ -212,3 +212,13 @@ button.info:hover { background: var(--accent); color: #fff; border-color: var(--
   border-color: var(--warning);
   background: color-mix(in oklab, var(--warning) 16%, var(--surface-1));
 }
+
+/* A notice that is a problem to act on, not information. */
+.notice.warn {
+  background: color-mix(in oklab, var(--warning) 18%, var(--surface-1));
+  border-color: color-mix(in oklab, var(--warning) 45%, var(--border));
+}
+.notice code {
+  background: var(--page); border-radius: 4px; padding: 1px 5px;
+  font-size: 12px;
+}

@@ -57,6 +57,16 @@ export default function App() {
       {help && <Help onClose={() => setHelp(false)} />}
       <main className="page">
         {error && <div className="notice">{error}</div>}
+        {meta?.stale_backend && (
+          <div className="notice warn">
+            <b>The server is running older code than this page.</b> A file
+            changed on disk after it started — the built frontend is read
+            fresh on every request, but Python is not. Stop uvicorn
+            (Ctrl&#8209;C) and start it again, or run it with{' '}
+            <code>--reload</code>. Until then, anything added since that start
+            will fail with “not found”.
+          </div>
+        )}
         {!summary || !meta ? (!error && <p className="muted">Loading…</p>) : (
           <>
             {tab === 'Dashboard' && <Dashboard {...ctx} />}

@@ -103,6 +103,26 @@ AMFI_CACHE_HOURS = 12
 MAX_UPLOAD_BYTES = 20_000_000
 _started = datetime.now()
 
+
+def code_changed_since_start():
+    """True when a .py file on disk is newer than this running process.
+
+    Updating is `git pull` plus `npm run build`, and the built frontend is
+    read from disk on every request -- so the new UI appears immediately
+    while the Python process keeps running the old code. The result is a new
+    page calling an endpoint that does not exist yet, which looks like a
+    network fault and is not one. Cheap to check, and it turns a confusing
+    404 into "restart the server".
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    try:
+        newest = max(os.path.getmtime(os.path.join(here, f))
+                     for f in os.listdir(here) if f.endswith(".py"))
+    except (OSError, ValueError):        # pragma: no cover - unreadable dir
+        return False
+    return newest > _started.timestamp()
+
+
 # Which profile the request in hand is for. A cookie carries it rather than a
 # header, so plain download links -- the export PDF, the locator sheet --
 # reach the right portfolio without every call site remembering to pass it.
@@ -175,7 +195,9 @@ def parse_date(v):
 def meta():
     return {"asset_classes": ASSET_CLASSES,
             "asset_class_labels": ASSET_CLASS_LABELS,
-            "buckets": ["equity", "debt", "gold", "real_estate", "cash", "other"]}
+            "buckets": ["equity", "debt", "gold", "real_estate", "cash", "other"],
+            "stale_backend": code_changed_since_start(),
+            "started": _started.isoformat(timespec="seconds")}
 
 
 # ---------------- summary ----------------

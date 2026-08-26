@@ -9,6 +9,13 @@ async function req(method, url, body) {
   if (!r.ok) {
     let detail = r.statusText
     try { detail = (await r.json()).detail || detail } catch { /* ignore */ }
+    // A 404 on an /api path is almost never a missing record — those return
+    // a message. It means this endpoint is not in the running server, i.e.
+    // the Python process is older than the page calling it.
+    if (r.status === 404 && url.startsWith('/api/')) {
+      detail = 'this server does not have ' + url + '. It is probably running'
+        + ' older code — stop uvicorn and start it again, then reload.'
+    }
     throw new Error(detail)
   }
   const ct = r.headers.get('content-type') || ''

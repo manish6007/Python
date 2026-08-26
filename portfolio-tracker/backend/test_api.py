@@ -319,3 +319,19 @@ def test_erase_all_data_really_erases_all_of_it(client):
     for path in ("/api/holdings", "/api/policies", "/api/goals", "/api/loans"):
         assert client.get(path).json() == [], path
     assert client.get("/api/summary").json()["total_assets"] == 0
+
+
+def test_the_app_notices_when_the_server_is_older_than_the_code(client,
+                                                                monkeypatch):
+    """Updating is git pull + npm run build; the Python process is not
+    restarted by either, so a new page ends up calling an endpoint the
+    running server does not have. That looks like a network fault."""
+    from datetime import datetime, timedelta
+    assert client.get("/api/meta").json()["stale_backend"] is False
+
+    # Pretend the process started before the files on disk were last written.
+    monkeypatch.setattr(main, "_started", datetime.now() + timedelta(days=1))
+    assert client.get("/api/meta").json()["stale_backend"] is False
+
+    monkeypatch.setattr(main, "_started", datetime.now() - timedelta(days=365))
+    assert client.get("/api/meta").json()["stale_backend"] is True

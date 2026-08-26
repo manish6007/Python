@@ -17,17 +17,27 @@ import json
 import os
 import re
 
-BASE = os.path.dirname(os.path.abspath(__file__))
-PROFILE_DIR = os.path.join(BASE, "profiles")
-REGISTRY = os.path.join(BASE, "profiles.json")
+import config
+
 DEFAULT_ID = "default"
 DEFAULT_FILE = "portfolio.db"          # where a pre-profiles install already is
 MAX_PROFILES = 20
 
 
+# Every path is resolved through these rather than fixed at import, so
+# pointing the app at a different folder -- an encrypted volume, a synced
+# drive, a USB stick -- takes effect without restarting anything.
+def profile_dir():
+    return os.path.join(config.data_dir(), "profiles")
+
+
+def registry_path():
+    return os.path.join(config.data_dir(), "profiles.json")
+
+
 def _read():
     try:
-        with open(REGISTRY) as fh:
+        with open(registry_path()) as fh:
             data = json.load(fh)
     except (OSError, ValueError):
         data = {}
@@ -39,10 +49,12 @@ def _read():
 
 
 def _write(data):
-    tmp = REGISTRY + ".tmp"
+    os.makedirs(config.data_dir(), exist_ok=True)
+    path = registry_path()
+    tmp = path + ".tmp"
     with open(tmp, "w") as fh:
         json.dump(data, fh, indent=2)
-    os.replace(tmp, REGISTRY)          # never leave a half-written registry
+    os.replace(tmp, path)              # never leave a half-written registry
 
 
 def slugify(name):
@@ -70,8 +82,8 @@ def get(profile_id):
 def path_for(profile_id):
     p = get(profile_id)
     if p["file"] == DEFAULT_FILE:
-        return os.path.join(BASE, DEFAULT_FILE)
-    return os.path.join(PROFILE_DIR, p["file"])
+        return os.path.join(config.data_dir(), DEFAULT_FILE)
+    return os.path.join(profile_dir(), p["file"])
 
 
 def create(name, demo=False):
@@ -89,7 +101,7 @@ def create(name, demo=False):
     existing = {p["id"] for p in data["profiles"]}
     if slug in existing:
         raise ValueError("A profile called %r already exists." % name)
-    os.makedirs(PROFILE_DIR, exist_ok=True)
+    os.makedirs(profile_dir(), exist_ok=True)
     profile = {"id": slug, "name": name[:60], "file": slug + ".db",
                "demo": bool(demo)}
     data["profiles"].append(profile)
@@ -129,7 +141,7 @@ def delete(profile_id):
     data["profiles"] = keep
     _write(data)
     try:
-        os.remove(os.path.join(PROFILE_DIR, gone["file"]))
+        os.remove(os.path.join(profile_dir(), gone["file"]))
     except OSError:
         pass                            # never created, or already gone
     return gone

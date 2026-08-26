@@ -135,9 +135,14 @@ const SECTIONS = [
     title: 'Privacy',
     body: [
       ['Where your data lives',
-        ['SQLite files on this machine. No accounts, no cloud, no telemetry. Back up backend/portfolio.db, and backend/profiles/ if you have made other profiles.',
-          'Outbound requests go only to AMFI and Yahoo, for prices.',
+        ['SQLite files on this machine. No accounts, no cloud, no telemetry. The Privacy page shows their exact paths — back those up and you have backed up everything.',
+          'Keep them somewhere else if you prefer: point the app at an encrypted volume, a synced folder or a USB stick from the Privacy page. The files are copied and verified before the switch, and the originals are left for you to delete.',
           'There is no field anywhere for a password, PIN or security answer, and there will not be.']],
+      ['Check it rather than believe it',
+        ['The Privacy page lists every outbound request made since the app started — the whole list, not a sample. Only four hosts can ever appear: AMFI for NAVs and three Yahoo hosts for stock prices. Anything else is refused in code before a connection opens.',
+          'Nothing about your portfolio is sent anywhere. A NAV refresh downloads the whole public price list and picks your funds out of it on this machine.',
+          'Offline mode blocks even those. Turn it on, unplug the network, and everything except price refresh still works — which is the claim worth checking.',
+          'What it does not protect you from: the files are not encrypted, profiles are separation and not a lock, and anything you export leaves on your instructions.']],
     ],
   },
 ]

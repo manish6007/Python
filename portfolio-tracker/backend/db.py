@@ -261,6 +261,18 @@ def get_session(path=None):
     return _factories[path]()
 
 
+def reset_engines():
+    """Drop every open connection.
+
+    Needed when the data folder changes: the engines are holding files in
+    the old location, and SQLite would keep writing there.
+    """
+    for engine in _engines.values():
+        engine.dispose()
+    _engines.clear()
+    _factories.clear()
+
+
 def get_setting(session, key, default=""):
     row = session.get(Setting, key)
     return row.value if row else default

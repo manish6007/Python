@@ -66,7 +66,10 @@ export default function Portfolio({ summary, meta, owners, reload }) {
     try {
       const r = await api.post('/api/prices/refresh')
       let m = `MF NAVs updated: ${r.mf_updated} · stocks updated: ${r.stocks_updated}`
-      if (!r.amfi_reachable) {
+      if (r.offline) {
+        m += ' · offline mode is on, so nothing was fetched. Turn it off on'
+          + ' the Privacy page to refresh prices.'
+      } else if (!r.amfi_reachable) {
         m += ' · AMFI could not be reached — check your internet connection,'
           + ' then try again. Prices are left as they were.'
       } else if (r.mf_failed?.length) {

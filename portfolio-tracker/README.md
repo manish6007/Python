@@ -90,6 +90,15 @@ typing.
 This separates data; it is not a lock — see
 [Privacy and security](#privacy-and-security).
 
+### Check the privacy claims instead of believing them
+A **Privacy** page that exists for the sceptic: the real paths of your data
+files on this machine with their sizes, the complete list of the four hosts
+the app is *able* to contact and why, and a log of **every outbound request
+made since the app started** — the whole list, not a sample. Plus an
+**offline mode** that blocks all of them: turn it on, unplug the network, and
+everything except price refresh still works. You can also move the data
+anywhere writable — an encrypted volume, a synced folder, a USB stick.
+
 ### Leave your family a record
 Two documents: a **sealed PDF** (AES-256) listing every account, folio, policy
 and loan in full, and an **open one-page locator sheet** saying where the
@@ -120,8 +129,9 @@ uvicorn main:app --port 8000
 
 Open <http://localhost:8000>.
 
-All data lives in `backend/portfolio.db`. **Back up that one file.** Delete it
-to start over.
+All data lives in `backend/portfolio.db` by default. **Back up that file.**
+Delete it to start over. To keep it elsewhere — an encrypted volume, a synced
+folder — set `PORTFOLIO_DATA_DIR`, or move it from the Privacy page.
 
 For frontend development use two terminals instead — `uvicorn main:app
 --reload --port 8000` and `npm run dev` — and open the Vite URL; it proxies
@@ -219,6 +229,22 @@ chart shows corpus against a rising FI target with a band across the 9–15%
 range; **today's money is the default view** because nominal figures flatter
 the plan.
 
+### Privacy
+
+- **Where your data is** — the real file paths, sizes and last-written times.
+  Back those files up and you have backed up everything.
+- **What leaves this machine** — the four hosts the app can reach (AMFI for
+  NAVs, three Yahoo hosts for stock prices) and nothing else. An unlisted
+  host is refused in code before a connection is opened, not merely absent
+  from a policy document.
+- **Every request since the app started** — host, purpose, outcome. If the
+  app talked to something, it is on that list.
+- **Offline mode** — blocks every outbound request. Prices then come only
+  from what you type; nothing else changes.
+- **Keep the data somewhere else** — point the app at any writable folder.
+  Files are *copied* and verified before the switch, and the originals are
+  left where they were for you to delete once you have checked.
+
 ### Export
 
 - **Privacy-safe mode** (default) masks owner names and account numbers.
@@ -283,7 +309,19 @@ asset-class level, never specific products — and labelled educational.
 
 - **Your data never leaves your machine.** SQLite files on disk, no accounts,
   no cloud, no telemetry. Outbound requests go only to AMFI and Yahoo for
-  prices.
+  prices — and the **Privacy** page shows you every one of them as it
+  happens, so this is checkable rather than a promise. Nothing about your
+  portfolio is ever sent: the NAV request asks for the whole public price
+  list and picks your funds out of it locally.
+- **Nothing else is reachable.** The hosts the app may contact are a fixed
+  list in `netlog.py`; anything else is refused before a socket opens. There
+  is no analytics, no crash reporting and no update check.
+- **Offline mode** blocks even those. The app is fully usable with the
+  network off.
+- **The data folder is yours to choose.** Default is next to the code;
+  `PORTFOLIO_DATA_DIR` or the Privacy page moves it to an encrypted volume
+  or removable drive. The files themselves are *not* encrypted — put them
+  somewhere encrypted if that matters.
 - **Profiles separate data; they do not lock it.** There is no login, because
   on your own laptop one would be theatre — whoever holds the machine can open
   the `.db` files whatever the screen says. Anyone using it can also switch
@@ -327,11 +365,13 @@ nominee is often a trustee for the legal heirs rather than the owner.
 cd backend && python -m pytest -q
 ```
 
-136 tests covering the analytics, importers, profiles, FI projection and the
-family-record documents — valuation, XIRR, cashflow averaging, allocation drift and presets, liquidity,
-reconciliation, amortisation, the FI accumulation and drawdown model, goal
-impact, insurance gaps, both CAS layouts, profile isolation, and AES-256
-encryption round-trips.
+151 tests covering the analytics, importers, profiles, privacy, the FI
+projection and the family-record documents — valuation, XIRR, cashflow
+averaging, allocation drift and presets, liquidity, reconciliation,
+amortisation, the FI accumulation and drawdown model, goal
+impact, insurance gaps, both CAS layouts, profile isolation, the outbound
+allowlist and offline mode, moving the data folder, and AES-256 encryption
+round-trips.
 
 ```bash
 flake8 backend --max-line-length=127

@@ -9,9 +9,11 @@ import FI from './pages/FI'
 import Insurance from './pages/Insurance'
 import Loans from './pages/Loans'
 import Portfolio from './pages/Portfolio'
+import Privacy from './pages/Privacy'
 import Settings from './pages/Settings'
 
-const TABS = ['Dashboard', 'Portfolio', 'Cashflow', 'Loans', 'Insurance', 'FI', 'Export', 'Settings']
+const TABS = ['Dashboard', 'Portfolio', 'Cashflow', 'Loans', 'Insurance', 'FI',
+  'Export', 'Privacy', 'Settings']
 
 export default function App() {
   const [tab, setTab] = useState('Dashboard')
@@ -64,6 +66,7 @@ export default function App() {
             {tab === 'Insurance' && <Insurance {...ctx} />}
             {tab === 'FI' && <FI {...ctx} />}
             {tab === 'Export' && <ExportPage {...ctx} />}
+            {tab === 'Privacy' && <Privacy {...ctx} />}
             {tab === 'Settings' && <Settings {...ctx} />}
           </>
         )}

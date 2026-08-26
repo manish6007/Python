@@ -8,6 +8,7 @@ import json
 
 import pytest
 
+import config
 import db
 import main
 import profiles as profiles_mod
@@ -16,9 +17,9 @@ import profiles as profiles_mod
 @pytest.fixture
 def store(tmp_path, monkeypatch):
     """A fresh installation: empty registry, empty profile directory."""
-    monkeypatch.setattr(profiles_mod, "BASE", str(tmp_path))
-    monkeypatch.setattr(profiles_mod, "PROFILE_DIR", str(tmp_path / "profiles"))
-    monkeypatch.setattr(profiles_mod, "REGISTRY", str(tmp_path / "profiles.json"))
+    monkeypatch.setattr(config, "BASE", str(tmp_path))
+    monkeypatch.setattr(config, "CONFIG_PATH", str(tmp_path / "app-config.json"))
+    monkeypatch.delenv(config.ENV_DATA_DIR, raising=False)
     monkeypatch.setattr(db, "DB_PATH", str(tmp_path / "portfolio.db"))
     monkeypatch.setattr(db, "_engines", {})
     monkeypatch.setattr(db, "_factories", {})
@@ -118,7 +119,7 @@ def test_an_unknown_profile_falls_back_rather_than_erroring(store, monkeypatch):
 
 
 def test_the_registry_survives_being_corrupted(store):
-    with open(profiles_mod.REGISTRY, "w") as fh:
+    with open(profiles_mod.registry_path(), "w") as fh:
         fh.write("{not json")
     assert profiles_mod.list_profiles()[0]["id"] == profiles_mod.DEFAULT_ID
 
@@ -133,5 +134,5 @@ def test_a_demo_profile_comes_seeded(store, monkeypatch):
 
 def test_the_registry_is_written_atomically(store):
     profiles_mod.create("Demo")
-    with open(profiles_mod.REGISTRY) as fh:
+    with open(profiles_mod.registry_path()) as fh:
         assert len(json.load(fh)["profiles"]) == 2

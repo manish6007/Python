@@ -17,10 +17,13 @@ from fastapi.staticfiles import StaticFiles
 from contextvars import ContextVar
 
 import analytics
+import config as config_mod
+import db as db_mod
 import export as export_mod
 import family_record as fr_mod
 import fi as fi_mod
 import importers as imp_mod
+import netlog
 import pricing
 import profiles as profiles_mod
 import service
@@ -35,6 +38,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"],
                    allow_headers=["*"])
 
 _amfi_cache = {"data": {}, "at": None}
+_started = datetime.now()
 
 # Which profile the request in hand is for. A cookie carries it rather than a
 # header, so plain download links -- the export PDF, the locator sheet --
@@ -538,9 +542,9 @@ def refresh_prices():
             failed.append(h.name)
     s.commit()
     s.close()
-    return {"amfi_reachable": bool(navs), "mf_updated": mf_updated,
-            "mf_failed": mf_failed, "stocks_updated": stock_updated,
-            "stock_failed": failed}
+    return {"amfi_reachable": bool(navs), "offline": config_mod.offline(),
+            "mf_updated": mf_updated, "mf_failed": mf_failed,
+            "stocks_updated": stock_updated, "stock_failed": failed}
 
 
 @app.get("/api/amfi/search")
@@ -1230,6 +1234,53 @@ def export_pdf(privacy: int = 1):
         "Content-Disposition":
             "attachment; filename=portfolio_snapshot_%s.pdf"
             % date.today().isoformat()})
+
+
+# ---------------- where the data is, and what leaves ----------------
+@app.get("/api/privacy")
+def privacy_state():
+    """Everything needed to check the app's claims rather than believe them.
+
+    The real paths on this machine, every outbound request made since the
+    app started, and the complete list of hosts it is able to contact.
+    """
+    return {
+        "data_dir": config_mod.data_dir(),
+        "data_dir_source": config_mod.data_dir_source(),
+        "env_var": config_mod.ENV_DATA_DIR,
+        "files": config_mod.data_files(),
+        "offline": config_mod.offline(),
+        "allowed_hosts": [{"host": h, "purpose": p}
+                          for h, p in sorted(netlog.ALLOWED_HOSTS.items())],
+        "outbound": netlog.entries(),
+        "started": _started.isoformat(timespec="seconds"),
+    }
+
+
+@app.post("/api/privacy/offline")
+def set_offline(payload: dict = Body(...)):
+    """Stop the app contacting anything at all.
+
+    Prices then come only from what you type, which is a real cost -- and
+    the point: the app keeps working with the network switched off, which is
+    the sort of claim a user can check in a minute.
+    """
+    return {"offline": config_mod.set_offline(bool(payload.get("offline")))}
+
+
+@app.post("/api/privacy/data-dir")
+def move_data_dir(payload: dict = Body(...)):
+    """Point the app at a different folder, copying what is already there."""
+    try:
+        if payload.get("reset"):
+            config_mod.clear_data_dir()
+            db_mod.reset_engines()
+            return {"data_dir": config_mod.data_dir(), "copied": []}
+        result = config_mod.move_data(payload.get("path"))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    db_mod.reset_engines()               # reopen against the new location
+    return {"data_dir": config_mod.data_dir(), **result}
 
 
 # ---------------- profiles ----------------

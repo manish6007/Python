@@ -4,10 +4,43 @@ All fetchers fail soft (return {} / None) so the app keeps working offline
 with last-known or manual prices.
 """
 from datetime import datetime
+from urllib.parse import urlparse
 
 import requests
 
+import config
+import netlog
+
 AMFI_NAV_URL = "https://www.amfiindia.com/spages/NAVAll.txt"
+
+
+class Offline(Exception):
+    """Raised instead of opening a connection while offline mode is on."""
+
+
+def _get(url, timeout):
+    """Fetch a URL, but only one the app is allowed to contact, and log it.
+
+    Every outbound call goes through here so the log in the app is the whole
+    truth rather than a sample, and so offline mode is a fact about the code
+    rather than a promise in the UI.
+    """
+    host = urlparse(url).hostname or ""
+    purpose = netlog.purpose_for(host)
+    if not purpose:
+        netlog.record(host, "not on the allowed list", "refused")
+        raise Offline("This app does not contact %s." % host)
+    if config.offline():
+        netlog.record(host, purpose, "blocked", "offline mode is on")
+        raise Offline("Offline mode is on, so nothing was fetched.")
+    try:
+        resp = requests.get(url, timeout=timeout)
+        resp.raise_for_status()
+    except requests.RequestException as exc:
+        netlog.record(host, purpose, "failed", str(exc))
+        raise
+    netlog.record(host, purpose, "ok", "%d bytes" % len(resp.content))
+    return resp
 
 
 def parse_amfi_dump(text):
@@ -45,9 +78,8 @@ def fetch_amfi(timeout=30):
     also has to resolve ISINs -- should not fetch it twice.
     """
     try:
-        resp = requests.get(AMFI_NAV_URL, timeout=timeout)
-        resp.raise_for_status()
-    except requests.RequestException:
+        resp = _get(AMFI_NAV_URL, timeout)
+    except (requests.RequestException, Offline):
         return {}, {}
     return parse_amfi_dump(resp.text)
 
@@ -75,6 +107,11 @@ def fetch_stock_price(symbol):
     Pass the plain symbol (e.g. RELIANCE); .NS is appended if no suffix.
     Returns (price, date) or (None, None).
     """
+    if config.offline():
+        netlog.record("query1.finance.yahoo.com",
+                      netlog.purpose_for("query1.finance.yahoo.com"),
+                      "blocked", "offline mode is on")
+        return None, None
     try:
         import yfinance as yf
     except ImportError:
@@ -87,6 +124,14 @@ def fetch_stock_price(symbol):
         last = hist["Close"].dropna()
         if last.empty:
             return None, None
-        return float(last.iloc[-1]), last.index[-1].date()
-    except Exception:
+    except Exception as exc:
+        # yfinance opens its own connections, so this is logged around the
+        # call rather than inside _get. It reaches Yahoo and nowhere else.
+        netlog.record("query1.finance.yahoo.com",
+                      netlog.purpose_for("query1.finance.yahoo.com"),
+                      "failed", "%s: %s" % (symbol, exc))
         return None, None
+    netlog.record("query1.finance.yahoo.com",
+                  netlog.purpose_for("query1.finance.yahoo.com"),
+                  "ok", "%s" % symbol)
+    return float(last.iloc[-1]), last.index[-1].date()

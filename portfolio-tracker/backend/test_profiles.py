@@ -20,7 +20,6 @@ def store(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "BASE", str(tmp_path))
     monkeypatch.setattr(config, "CONFIG_PATH", str(tmp_path / "app-config.json"))
     monkeypatch.delenv(config.ENV_DATA_DIR, raising=False)
-    monkeypatch.setattr(db, "DB_PATH", str(tmp_path / "portfolio.db"))
     monkeypatch.setattr(db, "_engines", {})
     monkeypatch.setattr(db, "_factories", {})
     return tmp_path
@@ -94,8 +93,8 @@ def test_the_first_profile_cannot_be_deleted(store):
 def test_deleting_needs_the_name_typed_back(store):
     profiles_mod.create("Demo")
     with pytest.raises(main.HTTPException):
-        main.delete_profile("demo", confirm="something else")
-    assert main.delete_profile("demo", confirm="Demo")["ok"]
+        main.delete_profile("demo", {"confirm": "something else"})
+    assert main.delete_profile("demo", {"confirm": "Demo"})["ok"]
     assert [p["id"] for p in profiles_mod.list_profiles()] == ["default"]
 
 
@@ -107,7 +106,7 @@ def test_deleting_a_profile_takes_its_data_file(store, monkeypatch):
     path = profiles_mod.path_for("demo")
     import os
     assert os.path.exists(path)
-    main.delete_profile("demo", confirm="Demo")
+    main.delete_profile("demo", {"confirm": "Demo"})
     assert not os.path.exists(path)
 
 

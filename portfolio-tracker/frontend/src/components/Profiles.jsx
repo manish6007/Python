@@ -30,7 +30,7 @@ export default function Profiles() {
     if (typed === null) return
     setMsg('')
     try {
-      await api.del(`/api/profiles/${p.id}?confirm=${encodeURIComponent(typed)}`)
+      await api.del(`/api/profiles/${p.id}`, { confirm: typed })
       await load()
       setMsg(`Deleted “${p.name}”.`)
     } catch (e) { setMsg(e.message) }

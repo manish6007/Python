@@ -19,7 +19,7 @@ export const api = {
   get: (url) => req('GET', url),
   post: (url, body) => req('POST', url, body),
   put: (url, body) => req('PUT', url, body),
-  del: (url) => req('DELETE', url),
+  del: (url, body) => req('DELETE', url, body),
 }
 
 export function inr(x) {

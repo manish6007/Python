@@ -1,0 +1,47 @@
+# CI for portfolio-tracker/. The repo's default python-package.yml never ran
+# this project: it triggers only on master, installs from a requirements.txt
+# at the repo root that does not exist, and runs pytest from a directory
+# where the imports do not resolve.
+name: portfolio-tracker
+
+on:
+  push:
+    paths: ['portfolio-tracker/**', '.github/workflows/portfolio-tracker.yml']
+  pull_request:
+    paths: ['portfolio-tracker/**', '.github/workflows/portfolio-tracker.yml']
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.12"]   # the README's floor, and current
+    defaults:
+      run:
+        working-directory: portfolio-tracker/backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: portfolio-tracker/backend/requirements.txt
+      - run: pip install -r requirements.txt flake8 pytest
+      - run: flake8 .
+      - run: pytest
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: portfolio-tracker/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: portfolio-tracker/frontend/package-lock.json
+      - run: npm ci
+      - run: npm run build      # a build break is otherwise invisible

@@ -29,7 +29,11 @@ def holding_to_dict(h):
 
 def holding_out(h):
     """JSON-safe holding dict enriched with computed value/cost/bucket."""
-    d = holding_to_dict(h)
+    return enrich_holding(holding_to_dict(h))
+
+
+def enrich_holding(d):
+    """The computed half of holding_out, for a dict that already exists."""
     d["current_value"] = round(analytics.holding_value(d), 2)
     d["invested"] = round(analytics.holding_cost(d), 2)
     d["bucket"] = analytics.holding_bucket(d)
@@ -158,8 +162,10 @@ def full_pipeline(session):
     ctx, drift, targets, agg = build_suggestion_context(
         session, holdings, loans, cashflow)
     sugg = analytics.suggestions(ctx)
-    warnings = analytics.reconcile(recurring, loans, holdings,
-                                   policies=policies)
+    warnings = analytics.reconcile(
+        recurring, loans, holdings, policies=policies,
+        income_basis=get_setting(session, "income_basis", ""),
+        income_monthly=cashflow["income_m"])
     insurance = analytics.insurance_gap(
         policies, cashflow["income_m"] * 12,
         sum(loan["principal_outstanding"] for loan in loans))
@@ -170,7 +176,21 @@ def full_pipeline(session):
             "suggestions": sugg, "agg": agg}
 
 
+# Which database files have been checked. Doing this on every request meant
+# a query -- sometimes a commit -- before serving /api/meta.
+_owner_checked = set()
+
+
+def forget_owner_check(session):
+    """Re-check on the next request -- used after a wipe removes the owner."""
+    _owner_checked.discard(session.get_bind().url.database)
+
+
 def ensure_default_owner(session):
+    key = session.get_bind().url.database
+    if key in _owner_checked:
+        return
     if not session.query(Owner).count():
         session.add(Owner(name="Me"))
         session.commit()
+    _owner_checked.add(key)

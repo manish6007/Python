@@ -151,3 +151,65 @@ def test_profiles_follow_the_data_folder(store):
     profiles_mod.create("Demo")
     assert os.path.exists(profiles_mod.registry_path())
     assert profiles_mod.registry_path().startswith(str(store / "vault"))
+
+
+# ---- stock prices go through the same allowlist as NAVs ------------------
+CHART = {"chart": {"result": [{
+    "timestamp": [1756166400, 1756252800],
+    "indicators": {"quote": [{"close": [1400.5, None]}]},
+}]}}
+
+
+def test_a_stock_price_is_parsed_from_the_last_non_null_close(store):
+    """Yahoo pads the series with nulls for holidays."""
+    price, when = pricing.parse_chart(CHART)
+    assert price == 1400.5 and when is not None
+
+
+def test_a_malformed_chart_response_is_not_a_crash(store):
+    assert pricing.parse_chart({}) == (None, None)
+    assert pricing.parse_chart({"chart": {"result": []}}) == (None, None)
+
+
+def test_stock_prices_are_now_behind_the_enforced_allowlist(store,
+                                                            monkeypatch):
+    """They used to go via yfinance, which opened its own connections."""
+    seen = {}
+
+    class Resp:
+        content = b"{}"
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return CHART
+
+    def fake_get(url, timeout=None):
+        seen["url"] = url
+        return Resp()
+    monkeypatch.setattr(pricing.requests, "get", fake_get)
+    assert pricing.fetch_stock_price("RELIANCE")[0] == 1400.5
+    assert seen["url"].startswith("https://query1.finance.yahoo.com/")
+    assert "RELIANCE.NS" in seen["url"]
+    entry = netlog.entries()[0]
+    assert entry["host"] == "query1.finance.yahoo.com"
+    assert entry["outcome"] == "ok"
+
+
+def test_offline_mode_blocks_stock_prices_too(store, monkeypatch):
+    def explode(*a, **k):
+        raise AssertionError("a connection was opened while offline")
+    monkeypatch.setattr(pricing.requests, "get", explode)
+    config.set_offline(True)
+    assert pricing.fetch_stock_price("RELIANCE") == (None, None)
+    assert netlog.entries()[0]["outcome"] == "blocked"
+
+
+def test_symbols_are_de_duplicated_before_fetching(store, monkeypatch):
+    calls = []
+    monkeypatch.setattr(pricing, "fetch_stock_price",
+                        lambda s, t=15: calls.append(s) or (100.0, None))
+    out = pricing.fetch_stock_prices(["RELIANCE", "RELIANCE", "TCS", ""])
+    assert sorted(calls) == ["RELIANCE", "TCS"]
+    assert set(out) == {"RELIANCE", "TCS"}

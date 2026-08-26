@@ -1,7 +1,7 @@
 """Unit tests for the pure-python analytics engine (no external deps)."""
 import os
 import sys
-from datetime import date
+from datetime import date, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -494,3 +494,108 @@ def test_policy_without_a_nominee_is_flagged():
     pols[0]["nominee"] = "Spouse"
     assert "policy_without_nominee" not in [
         w["code"] for w in analytics.reconcile([], [], [], policies=pols)]
+
+
+# ---- review findings: valuation conventions ------------------------------
+def test_an_fd_stops_growing_at_maturity():
+    """A matured deposit is not still earning its contracted rate."""
+    h = {"asset_class": "fd", "avg_cost": 100000, "rate": 7.0,
+         "start_date": date(2018, 1, 1),
+         "meta": {"maturity_date": "2023-01-01"}}
+    at_maturity = analytics.holding_value(h, date(2023, 1, 1))
+    much_later = analytics.holding_value(h, date(2026, 8, 26))
+    assert round(at_maturity) == round(much_later)
+    assert 141000 < at_maturity < 142000        # 5 years, quarterly
+
+
+def test_an_fd_with_no_maturity_date_still_accrues():
+    h = {"asset_class": "fd", "avg_cost": 100000, "rate": 7.0,
+         "start_date": date(2018, 1, 1), "meta": {}}
+    assert analytics.holding_value(h, date(2026, 8, 26)) > 170000
+
+
+def test_a_matured_fd_is_reported_not_silently_frozen():
+    h = {"asset_class": "fd", "name": "Old FD", "avg_cost": 100000,
+         "rate": 7.0, "start_date": date(2018, 1, 1),
+         "meta": {"maturity_date": "2023-01-01"}}
+    codes = [w["code"] for w in analytics.reconcile(
+        [], [], holdings=[h], as_of=date(2026, 8, 26))]
+    assert "fd_matured" in codes
+
+
+def test_ppf_compounds_rather_than_accruing_simple_interest():
+    """PPF and EPF credit interest annually and it compounds."""
+    ten_years = analytics.balance_accrued(
+        100000, 7.1, date(2016, 1, 1), date(2026, 1, 1))
+    # Capped at MAX_ACCRUAL_MONTHS, so this is the 18-month figure, not the
+    # 10-year one -- the cap is the point.
+    eighteen_months = 100000 * 1.071 ** (analytics.MAX_ACCRUAL_MONTHS / 12)
+    assert abs(ten_years - eighteen_months) < 50
+
+
+def test_a_fresh_balance_compounds_and_beats_simple_interest():
+    compounded = analytics.balance_accrued(
+        100000, 7.1, date(2025, 1, 1), date(2026, 1, 1) + timedelta(days=180))
+    simple = 100000 * (1 + 0.071 * (365 + 180) / 365.25)
+    assert compounded > simple
+
+
+def test_a_balance_too_old_to_extrapolate_is_reported():
+    h = {"asset_class": "ppf", "name": "PPF", "manual_value": 100000,
+         "rate": 7.1, "value_date": date(2020, 1, 1)}
+    codes = [w["code"] for w in analytics.reconcile(
+        [], [], holdings=[h], as_of=date(2026, 8, 26))]
+    assert "balance_too_old" in codes
+
+
+def test_accrued_interest_is_not_an_unrealised_capital_gain():
+    """FD/PPF interest is income taxable on accrual; it cannot be unrealised."""
+    fd = {"asset_class": "fd", "name": "FD", "avg_cost": 100000, "rate": 7.0,
+          "start_date": date(2018, 1, 1), "meta": {}}
+    stock = {"asset_class": "stock", "name": "S", "units": 10,
+             "avg_cost": 100, "last_price": 150, "meta": {}}
+    out = analytics.unrealised_positions([fd, stock], as_of=date(2026, 8, 26))
+    assert [r["name"] for r in out["positions"]] == ["S"]
+    assert out["totals"]["gain"] == 500
+    assert out["totals"]["count"] == 1
+
+
+# ---- review findings: prepay vs invest -----------------------------------
+PREPAY = dict(principal=5000000, annual_rate_pct=8.5, emi=45000,
+              lumpsum=500000)
+
+
+def test_prepay_credits_the_emi_freed_by_closing_early():
+    """The whole point of prepaying is that the EMI stops sooner."""
+    r = analytics.prepay_vs_invest(invest_return_pct=12.0, **PREPAY)
+    assert r["months_saved"] > 0
+    # Terminal value comes from investing the freed EMI, so it must be at
+    # least the undiscounted sum of those payments.
+    assert r["prepay_terminal"] > 45000 * r["months_saved"]
+
+
+def test_both_strategies_are_measured_on_the_same_date():
+    r = analytics.prepay_vs_invest(invest_return_pct=12.0, **PREPAY)
+    assert r["payoff_months"] + r["months_saved"] == r["horizon_months"]
+    assert r["difference"] == r["prepay_terminal"] - r["invest_terminal"]
+
+
+def test_a_low_expected_return_favours_prepaying():
+    low = analytics.prepay_vs_invest(invest_return_pct=4.0, **PREPAY)
+    high = analytics.prepay_vs_invest(invest_return_pct=14.0, **PREPAY)
+    assert low["difference"] > 0                 # prepay wins
+    assert high["difference"] < 0                # investing wins
+
+
+def test_the_breakeven_return_is_where_the_two_tie():
+    r = analytics.prepay_vs_invest(invest_return_pct=12.0, **PREPAY)
+    be = r["breakeven_return_pct"]
+    assert be is not None
+    at_breakeven = analytics.prepay_vs_invest(invest_return_pct=be, **PREPAY)
+    assert abs(at_breakeven["difference"]) < 0.001 * at_breakeven["invest_terminal"]
+    # And it sits near the loan rate, which is the intuition it has to match.
+    assert 7.0 < be < 11.0
+
+
+def test_prepay_returns_none_when_the_emi_cannot_cover_interest():
+    assert analytics.prepay_vs_invest(5000000, 18.0, 5000, 100000, 12) is None

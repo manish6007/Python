@@ -116,19 +116,49 @@ export default function Loans({ summary, owners, reload }) {
           {result && (
             <div className="grid cols-2" style={{ marginTop: 14 }}>
               <div className="card stat">
-                <div className="label">Prepay {result.loan.name}</div>
-                <div className="value">{inr(result.interest_saved)}</div>
-                <div className="sub">interest saved · closes {result.months_saved} months earlier</div>
+                <div className="label">
+                  Prepay — worth in {Math.round(result.horizon_months / 12)} yrs
+                </div>
+                <div className="value">{inr(result.prepay_terminal)}</div>
+                <div className="sub">
+                  loan closes {result.months_saved} months early
+                  ({inr(result.interest_saved)} interest saved), then the whole
+                  EMI is invested for those {result.months_saved} months
+                </div>
               </div>
               <div className="card stat">
-                <div className="label">Invest instead (over {Math.round(result.horizon_months / 12)} yrs)</div>
-                <div className="value">{inr(result.invest_gain)}</div>
-                <div className="sub">expected gain (future value {inr(result.invest_future_value)})</div>
+                <div className="label">
+                  Invest — worth in {Math.round(result.horizon_months / 12)} yrs
+                </div>
+                <div className="value">{inr(result.invest_terminal)}</div>
+                <div className="sub">
+                  lumpsum invested for the full term; the EMI runs to the
+                  original end, so nothing is freed up
+                </div>
               </div>
-              <p className="small muted" style={{ gridColumn: '1 / -1' }}>
-                {result.interest_saved > result.invest_gain
-                  ? 'Prepaying wins at these rates — and it is risk-free.'
-                  : 'Investing wins on expected value, but prepaying is guaranteed; the investment return is not.'}
+              <p className="small" style={{ gridColumn: '1 / -1' }}>
+                <b>
+                  {result.difference > 0
+                    ? `Prepaying leaves you ${inr(result.difference)} better off`
+                    : `Investing leaves you ${inr(-result.difference)} better off`}
+                  {' '}at {calc.invest_return_pct}%.
+                </b>
+                {result.breakeven_return_pct !== null && (
+                  <> The two tie at a return of{' '}
+                    <b>{result.breakeven_return_pct}% a year</b>. Below that,
+                    prepaying wins; above it, investing does — so the question
+                    is really whether you expect to beat
+                    {' '}{result.breakeven_return_pct}%, not whether 
+                    {' '}{calc.invest_return_pct}% is the right guess.</>
+                )}
+              </p>
+              <p className="small muted" style={{ gridColumn: '1 / -1',
+                marginTop: 0 }}>
+                Both figures are what you would be worth on the same date, so
+                they are comparable. Prepaying is certain; the investment
+                return is not, which is worth more than the gap when the gap
+                is small. Neither side models tax on the gains or the interest
+                deduction under section 24.
               </p>
             </div>
           )}

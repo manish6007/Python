@@ -3,8 +3,9 @@
 All fetchers fail soft (return {} / None) so the app keeps working offline
 with last-known or manual prices.
 """
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import requests
 
@@ -101,37 +102,69 @@ def search_amfi(navs, query, limit=20):
     return hits[:limit]
 
 
-def fetch_stock_price(symbol):
-    """Latest close for an NSE/BSE ticker via yfinance.
+CHART_URL = ("https://query1.finance.yahoo.com/v8/finance/chart/"
+             "{symbol}?range=5d&interval=1d")
+
+
+def parse_chart(payload):
+    """Latest close and its date from Yahoo's chart JSON.
+
+    Returns (price, date) or (None, None). Yahoo pads the series with nulls
+    for holidays, so the last non-null close is taken rather than the last
+    element.
+    """
+    try:
+        result = payload["chart"]["result"][0]
+        stamps = result["timestamp"]
+        closes = result["indicators"]["quote"][0]["close"]
+    except (KeyError, IndexError, TypeError):
+        return None, None
+    for ts, close in zip(reversed(stamps), reversed(closes)):
+        if close is not None:
+            return float(close), datetime.fromtimestamp(ts).date()
+    return None, None
+
+
+def fetch_stock_price(symbol, timeout=15):
+    """Latest close for an NSE/BSE ticker, straight from Yahoo's chart API.
+
+    This used to go through yfinance, which opened its own connections to
+    whatever hosts it liked -- so the allowlist was advisory for the one feed
+    that was a third-party library, and the log named a host that may not
+    have been the one contacted. One small JSON parse buys back an enforced
+    allowlist, an honest log, and one less dependency that breaks on Yahoo's
+    schedule rather than ours.
 
     Pass the plain symbol (e.g. RELIANCE); .NS is appended if no suffix.
     Returns (price, date) or (None, None).
     """
-    if config.offline():
-        netlog.record("query1.finance.yahoo.com",
-                      netlog.purpose_for("query1.finance.yahoo.com"),
-                      "blocked", "offline mode is on")
-        return None, None
-    try:
-        import yfinance as yf
-    except ImportError:
-        return None, None
     ticker = symbol if "." in symbol else symbol + ".NS"
     try:
-        hist = yf.Ticker(ticker).history(period="5d")
-        if hist is None or hist.empty:
-            return None, None
-        last = hist["Close"].dropna()
-        if last.empty:
-            return None, None
-    except Exception as exc:
-        # yfinance opens its own connections, so this is logged around the
-        # call rather than inside _get. It reaches Yahoo and nowhere else.
-        netlog.record("query1.finance.yahoo.com",
-                      netlog.purpose_for("query1.finance.yahoo.com"),
-                      "failed", "%s: %s" % (symbol, exc))
+        resp = _get(CHART_URL.format(symbol=quote(ticker, safe="")), timeout)
+    except (requests.RequestException, Offline):
         return None, None
-    netlog.record("query1.finance.yahoo.com",
-                  netlog.purpose_for("query1.finance.yahoo.com"),
-                  "ok", "%s" % symbol)
-    return float(last.iloc[-1]), last.index[-1].date()
+    try:
+        return parse_chart(resp.json())
+    except ValueError:
+        return None, None
+
+
+def fetch_stock_prices(symbols, timeout=15, workers=5):
+    """Prices for several tickers at once.
+
+    One holding per round trip made a thirty-stock refresh a thirty-request
+    wait; symbols are de-duplicated first, because the same stock held by two
+    people is still one price.
+    """
+    unique = []
+    for sym in symbols:
+        sym = (sym or "").strip()
+        if sym and sym not in unique:
+            unique.append(sym)
+    if not unique:
+        return {}
+    if config.offline():                 # no threads, no sockets, one log line
+        return {sym: fetch_stock_price(sym, timeout) for sym in unique[:1]}
+    with ThreadPoolExecutor(max_workers=min(workers, len(unique))) as pool:
+        results = pool.map(lambda s: fetch_stock_price(s, timeout), unique)
+        return dict(zip(unique, results))

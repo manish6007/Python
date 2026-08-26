@@ -79,7 +79,9 @@ const SECTIONS = [
     title: 'Loans & Insurance',
     body: [
       ['Loans',
-        ['Outstanding, rate, EMI and tenure, plus a prepay-vs-invest comparison: interest saved and months shaved, against the expected return on investing the same lump sum.']],
+        ['Outstanding, rate, EMI and tenure, plus prepay-vs-invest.',
+          'Both strategies are run to the same date and compared on what you would be worth then. Prepaying closes the loan early and the EMI freed by that is invested for the remaining months — the half most comparisons forget, and the reason a raw “interest saved” figure understates prepaying.',
+          'It also gives the breakeven return: the rate at which the two tie. Argue with that number rather than with the 12% guess. Neither side models tax on the gains or the section 24 interest deduction.']],
       ['Insurance',
         ['Cover, premium, renewal date and nominee, with gaps against conventional levels — 12× income plus outstanding debt for life, a family floor for health.',
           'Premiums are held here for the reminder only; the committed outflows on Cashflow own the cashflow figure, so nothing is double-counted.']],
@@ -121,6 +123,8 @@ const SECTIONS = [
     body: [
       ['Assumptions, all editable',
         ['Income and expenses are averaged over the months that actually carry entries, not a fixed window.',
+          'FDs compound quarterly and stop at maturity — a matured deposit is not still earning its old rate. PPF/EPF/savings compound annually from the balance you entered, for at most 18 months, then hold flat and ask you for a current figure. Neither grows by contributions recorded on Cashflow.',
+          'Unrealised gains cover unit-priced holdings only. Accrued FD or PPF interest is income taxed as it accrues, not a capital gain.',
           'Expenses exclude EMI and include recurring costs — which is also what post-FI spending looks like.',
           'FI target defaults to 30× expenses; the 25× (4%) rule is US-derived and Indian inflation is higher.',
           'Each bucket compounds at its own rate; only equity moves across scenarios.',

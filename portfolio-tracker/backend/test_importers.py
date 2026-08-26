@@ -336,15 +336,15 @@ def test_refresh_prices_resolves_a_cas_fund_by_its_isin(tmp_path, monkeypatch):
 
     import db
     import profiles as profiles_mod
-    monkeypatch.setattr(db, "DB_PATH", str(tmp_path / "t.db"))
+    path = str(tmp_path / "t.db")
     monkeypatch.setattr(db, "_engines", {})
     monkeypatch.setattr(db, "_factories", {})
-    monkeypatch.setattr(profiles_mod, "path_for", lambda *a: db.DB_PATH)
+    monkeypatch.setattr(profiles_mod, "path_for", lambda *a: path)
     import main
     import pricing
     from datetime import date as _date
 
-    s = db.get_session()
+    s = db.get_session(path)
     s.add(db.Owner(name="Me"))
     s.commit()
     s.add(db.Holding(owner_id=1, asset_class="mutual_fund", name="Axis ELSS",
@@ -360,7 +360,7 @@ def test_refresh_prices_resolves_a_cas_fund_by_its_isin(tmp_path, monkeypatch):
     out = main.refresh_prices()
     assert out["mf_updated"] == 1 and out["mf_failed"] == []
 
-    s = db.get_session()
+    s = db.get_session(path)
     h = s.query(db.Holding).first()
     assert h.identifier == "120503"                  # code took the slot
     assert h.last_price == 112.6609
@@ -372,15 +372,15 @@ def test_refresh_prices_names_the_funds_it_could_not_price(tmp_path,
                                                            monkeypatch):
     import db
     import profiles as profiles_mod
-    monkeypatch.setattr(db, "DB_PATH", str(tmp_path / "t2.db"))
+    path = str(tmp_path / "t2.db")
     monkeypatch.setattr(db, "_engines", {})
     monkeypatch.setattr(db, "_factories", {})
-    monkeypatch.setattr(profiles_mod, "path_for", lambda *a: db.DB_PATH)
+    monkeypatch.setattr(profiles_mod, "path_for", lambda *a: path)
     import main
     import pricing
     from datetime import date as _date
 
-    s = db.get_session()
+    s = db.get_session(path)
     s.add(db.Owner(name="Me"))
     s.commit()
     s.add(db.Holding(owner_id=1, asset_class="mutual_fund", name="Some Fund",

@@ -30,25 +30,52 @@ UNIT_PRICED = {"mutual_fund", "stock", "gold_etf", "reit", "sgb", "nps",
 BALANCE_BASED = {"savings", "epf", "ppf", "other"}
 
 
+# How long a last-known balance may be extrapolated before the number owes
+# more to this formula than to reality. Beyond it the balance is held flat
+# and the user is asked for a fresh one.
+MAX_ACCRUAL_MONTHS = 18
+
+
 def fd_value(principal, annual_rate_pct, start_date, as_of,
-             compounding_per_year=4):
-    """Quarterly-compounded FD value (bank convention)."""
+             compounding_per_year=4, maturity_date=None):
+    """Quarterly-compounded FD value (bank convention).
+
+    Accrual stops at maturity. A matured deposit is not still earning its
+    contracted rate -- the money is sitting in a savings account or was
+    renewed at whatever rate applied that day -- and compounding past it
+    inflates net worth a little more every day it is left unnoticed.
+    """
     if not principal or not start_date or as_of <= start_date:
         return float(principal or 0.0)
+    if maturity_date and maturity_date < as_of:
+        as_of = maturity_date
+        if as_of <= start_date:
+            return float(principal)
     years = (as_of - start_date).days / 365.25
     r = annual_rate_pct / 100.0
     n = compounding_per_year
     return principal * (1 + r / n) ** (n * years)
 
 
-def balance_accrued(balance, annual_rate_pct, value_date, as_of):
-    """Simple accrual on a last-known balance (PPF/EPF/savings)."""
+def balance_accrued(balance, annual_rate_pct, value_date, as_of,
+                    compounding_per_year=1):
+    """Accrual on a last-known balance (PPF/EPF/savings).
+
+    Compounded, like the FD path: PPF and EPF credit interest annually and
+    it compounds, so simple interest quietly understates a long-held balance
+    by double digits. Extrapolation is capped -- past MAX_ACCRUAL_MONTHS the
+    balance stops moving, because the honest answer is that the app no longer
+    knows, and a warning asks for a current figure.
+    """
     if not balance:
         return 0.0
     if not value_date or as_of <= value_date or not annual_rate_pct:
         return float(balance)
-    years = (as_of - value_date).days / 365.25
-    return balance * (1 + annual_rate_pct / 100.0 * years)
+    days = min((as_of - value_date).days,
+               int(MAX_ACCRUAL_MONTHS * 365.25 / 12))
+    years = days / 365.25
+    n = max(int(compounding_per_year or 1), 1)
+    return balance * (1 + annual_rate_pct / 100.0 / n) ** (n * years)
 
 
 def holding_value(h, as_of=None):
@@ -61,7 +88,9 @@ def holding_value(h, as_of=None):
     cls = h.get("asset_class")
     if cls == "fd":
         return fd_value(h.get("avg_cost") or h.get("manual_value") or 0.0,
-                        h.get("rate") or 0.0, h.get("start_date"), as_of)
+                        h.get("rate") or 0.0, h.get("start_date"), as_of,
+                        maturity_date=_parse_date(
+                            (h.get("meta") or {}).get("maturity_date")))
     if cls in BALANCE_BASED:
         return balance_accrued(h.get("manual_value") or 0.0,
                                h.get("rate") or 0.0,
@@ -174,20 +203,29 @@ def has_split(h):
     return len(holding_splits(h)) > 1
 
 
-def reconcile(recurring, loans, holdings=None, as_of=None,
-              policies=None):
-    """Inconsistencies a human reviewer would otherwise have to guess about.
+# Each check is a small function over the same context and returns the
+# warnings it found. A flat 150-line reconcile() grew a branch every time the
+# app learned something new; this way adding a check is a local change and
+# each one can be tested on its own.
+_CHECKS = []
 
-    Returns dicts of {level, code, message}. These are reported, never
-    silently corrected -- the app cannot know which side is right.
-    """
-    as_of = as_of or date.today()
-    holdings = holdings or []
-    out = []
 
-    emis = [r for r in recurring if r.get("kind") == "emi"]
+def _check(fn):
+    _CHECKS.append(fn)
+    return fn
+
+
+def _names(items, limit=3):
+    return ", ".join(h.get("name", "?") for h in items[:limit])
+
+
+@_check
+def _emi_against_loans(ctx):
+    emis = [r for r in ctx["recurring"] if r.get("kind") == "emi"]
+    loans = ctx["loans"]
     emi_total = sum(r["amount_monthly"] for r in emis)
     loan_emi_total = sum(loan.get("emi") or 0 for loan in loans)
+    out = []
     if emis and not loans:
         out.append({
             "level": "warning", "code": "emi_without_loan",
@@ -195,90 +233,201 @@ def reconcile(recurring, loans, holdings=None, as_of=None,
                        "behind them, so the interest rate, outstanding balance "
                        "and remaining tenure are unknown. Add them on the Loans "
                        "page -- prepay-vs-invest and any review depend on the "
-                       "rate." % (len(emis), _inr(emi_total))})
+                       "rate." % (len(emis), inr(emi_total))})
     elif emis and loans and abs(emi_total - loan_emi_total) > max(
             0.01 * max(emi_total, loan_emi_total), 100):
         out.append({
             "level": "warning", "code": "emi_mismatch",
             "message": "EMI outflows total %s/month but the recorded loans' "
                        "EMIs total %s/month. One of the two is out of date."
-                       % (_inr(emi_total), _inr(loan_emi_total))})
+                       % (inr(emi_total), inr(loan_emi_total))})
     for loan in loans:
         if (loan.get("emi") or 0) > 0 and not emis:
             out.append({
                 "level": "warning", "code": "loan_without_emi",
                 "message": "Loan '%s' has an EMI of %s but no matching committed "
                            "outflow, so it is missing from your monthly surplus."
-                           % (loan.get("name", "loan"), _inr(loan["emi"]))})
+                           % (loan.get("name", "loan"), inr(loan["emi"]))})
             break
+    return out
 
-    hybrid = [h for h in holdings
+
+@_check
+def _income_basis(ctx):
+    """Gross or net changes what the surplus means.
+
+    The app will not guess a tax bill; it says which way the number is wrong
+    instead, because a surplus nobody can interpret is worse than none.
+    """
+    if not ctx["income_monthly"]:
+        return []
+    basis = (ctx["income_basis"] or "").lower()
+    if basis == "gross":
+        return [{
+            "level": "warning", "code": "income_is_gross",
+            "message": "Income is recorded as gross pay, so the surplus "
+                       "above is overstated by your whole tax bill, and "
+                       "any PF deducted from salary is being subtracted "
+                       "from money that never reached you. Enter take-home "
+                       "pay for a surplus you can act on."}]
+    if basis not in ("net", "take_home"):
+        return [{
+            "level": "info", "code": "income_basis_unknown",
+            "message": "Whether the salary entered is gross or take-home "
+                       "is not set, so nobody reading this plan -- you "
+                       "included -- can tell whether the surplus is "
+                       "spendable. Set it under Settings -> Planning "
+                       "inputs."}]
+    return []
+
+
+@_check
+def _matured_fds(ctx):
+    as_of = ctx["as_of"]
+    matured = [h for h in ctx["holdings"]
+               if h.get("asset_class") == "fd"
+               and _parse_date((h.get("meta") or {}).get("maturity_date"))
+               and _parse_date(h["meta"]["maturity_date"]) < as_of]
+    if not matured:
+        return []
+    return [{
+        "level": "warning", "code": "fd_matured",
+        "message": "%d fixed deposit(s) matured on or before today, so "
+                   "their value is held at the maturity amount and is no "
+                   "longer growing. Re-enter them as renewed deposits or "
+                   "as savings, whichever happened: %s."
+                   % (len(matured), _names(matured))}]
+
+
+@_check
+def _stale_balances(ctx):
+    as_of = ctx["as_of"]
+    stale = [h for h in ctx["holdings"]
+             if h.get("asset_class") in BALANCE_BASED
+             and h.get("manual_value")
+             and h.get("value_date")
+             and (as_of - _parse_date(str(h["value_date"]))).days
+             > MAX_ACCRUAL_MONTHS * 365.25 / 12]
+    if not stale:
+        return []
+    return [{
+        "level": "warning", "code": "balance_too_old",
+        "message": "%d balance(s) (PF/PPF/NPS/savings) were last entered "
+                   "over %d months ago. Accrual stops there rather than "
+                   "extrapolating further, and contributions since then "
+                   "are not included, so these read low: %s."
+                   % (len(stale), MAX_ACCRUAL_MONTHS, _names(stale))}]
+
+
+@_check
+def _hybrid_without_split(ctx):
+    hybrid = [h for h in ctx["holdings"]
               if h.get("asset_class") == "mutual_fund"
               and ((h.get("meta") or {}).get("category") or "").lower()
               in ("hybrid", "multi_asset")
               and not has_split(h)]
-    if hybrid:
-        out.append({
-            "level": "warning", "code": "hybrid_without_split",
-            "message": "%d hybrid/multi-asset fund(s) are counted 100%% as "
-                       "equity because no look-through split is set, which "
-                       "understates the debt and gold you already hold: %s."
-                       % (len(hybrid), ", ".join(h.get("name", "?")
-                                                 for h in hybrid[:3]))})
+    if not hybrid:
+        return []
+    return [{
+        "level": "warning", "code": "hybrid_without_split",
+        "message": "%d hybrid/multi-asset fund(s) are counted 100%% as "
+                   "equity because no look-through split is set, which "
+                   "understates the debt and gold you already hold: %s."
+                   % (len(hybrid), _names(hybrid))}]
 
-    stale = [h for h in holdings
+
+@_check
+def _stale_prices(ctx):
+    as_of = ctx["as_of"]
+    stale = [h for h in ctx["holdings"]
              if h.get("asset_class") in ("mutual_fund", "stock")
              and h.get("price_date")
-             and (as_of - _parse_date(h["price_date"])).days > 7]
-    if stale:
-        out.append({
-            "level": "info", "code": "stale_prices",
-            "message": "%d holding(s) were last priced more than a week ago; "
-                       "refresh prices before relying on the valuation."
-                       % len(stale)})
+             # 10 days, not 7: a long weekend plus a holiday is not staleness.
+             and (as_of - _parse_date(h["price_date"])).days > 10]
+    if not stale:
+        return []
+    return [{
+        "level": "info", "code": "stale_prices",
+        "message": "%d holding(s) were last priced over ten days ago; "
+                   "refresh prices before relying on the valuation."
+                   % len(stale)}]
 
+
+@_check
+def _premiums_against_cashflow(ctx):
+    policies = ctx["policies"]
     policy_premium = sum(to_annual(p.get("premium") or 0, p.get("frequency"))
-                         for p in (policies or []))
-    outflow_premium = sum(r["amount_monthly"] * 12 for r in recurring
+                         for p in policies)
+    outflow_premium = sum(r["amount_monthly"] * 12 for r in ctx["recurring"]
                           if r.get("kind") == "premium")
     if policy_premium > 0 and abs(policy_premium - outflow_premium) > max(
             0.05 * policy_premium, 1000):
-        out.append({
+        return [{
             "level": "warning", "code": "premium_not_in_cashflow",
             "message": "Policies total %s/year in premiums but committed "
                        "outflows carry %s/year. Whichever is missing, your "
                        "surplus is wrong by the difference."
-                       % (_inr(policy_premium), _inr(outflow_premium))})
+                       % (inr(policy_premium), inr(outflow_premium))}]
+    return []
 
-    for p in (policies or []):
+
+@_check
+def _policy_without_nominee(ctx):
+    for p in ctx["policies"]:
         if not (p.get("nominee") or "").strip():
-            out.append({
+            return [{
                 "level": "warning", "code": "policy_without_nominee",
                 "message": "Policy '%s' has no nominee recorded — a claim "
                            "without one is far harder for a family to settle."
-                           % p.get("name", "policy")})
-            break
+                           % p.get("name", "policy")}]
+    return []
 
-    no_nominee = [h for h in holdings
+
+@_check
+def _holdings_without_nominee(ctx):
+    as_of = ctx["as_of"]
+    none_named = [h for h in ctx["holdings"]
                   if not (h.get("meta") or {}).get("nominee")
                   and holding_value(h, as_of) > 0]
-    if no_nominee:
-        out.append({
-            "level": "warning", "code": "missing_nominee",
-            "message": "%d holding(s) worth %s have no nominee recorded. A "
-                       "missing or stale nomination is the most common reason "
-                       "a family cannot reach money it is entitled to."
-                       % (len(no_nominee),
-                          _inr(sum(holding_value(h, as_of) for h in no_nominee)))})
+    if not none_named:
+        return []
+    return [{
+        "level": "warning", "code": "missing_nominee",
+        "message": "%d holding(s) worth %s have no nominee recorded. A "
+                   "missing or stale nomination is the most common reason "
+                   "a family cannot reach money it is entitled to."
+                   % (len(none_named),
+                      inr(sum(holding_value(h, as_of)
+                              for h in none_named)))}]
 
-    undated_fds = [h for h in holdings if h.get("asset_class") == "fd"
-                   and not (h.get("meta") or {}).get("maturity_date")]
-    if undated_fds:
-        out.append({
-            "level": "info", "code": "fd_without_maturity",
-            "message": "%d fixed deposit(s) have no maturity date, so they are "
-                       "treated as locked and excluded from your emergency "
-                       "fund." % len(undated_fds)})
+
+@_check
+def _fds_without_maturity(ctx):
+    undated = [h for h in ctx["holdings"] if h.get("asset_class") == "fd"
+               and not (h.get("meta") or {}).get("maturity_date")]
+    if not undated:
+        return []
+    return [{
+        "level": "info", "code": "fd_without_maturity",
+        "message": "%d fixed deposit(s) have no maturity date, so they are "
+                   "treated as locked and excluded from your emergency "
+                   "fund." % len(undated)}]
+
+
+def reconcile(recurring, loans, holdings=None, as_of=None,
+              policies=None, income_basis="", income_monthly=0.0):
+    """Inconsistencies a human reviewer would otherwise have to guess about.
+
+    Returns dicts of {level, code, message}. These are reported, never
+    silently corrected -- the app cannot know which side is right.
+    """
+    ctx = {"recurring": recurring, "loans": loans,
+           "holdings": holdings or [], "policies": policies or [],
+           "as_of": as_of or date.today(),
+           "income_basis": income_basis, "income_monthly": income_monthly}
+    out = []
+    for check in _CHECKS:
+        out.extend(check(ctx))
     return out
 
 
@@ -304,6 +453,12 @@ def unrealised_positions(holdings, as_of=None):
                         "long_gain": 0.0, "short_loss": 0.0, "long_loss": 0.0,
                         "undated": 0}
     for h in holdings:
+        # Only unit-priced assets have an unrealised gain. Accrued FD/PPF
+        # interest is income, taxable as it accrues, and cannot be
+        # "unrealised" -- counting it here inflated the panel and gave it a
+        # capital-gains term it does not have.
+        if h.get("asset_class") not in UNIT_PRICED:
+            continue
         cost = holding_cost(h)
         value = holding_value(h, as_of)
         if not cost:
@@ -468,7 +623,7 @@ def monthly_cashflow(income_total, expense_total, months, recurring,
             / income_m if income_m else 0.0}
 
 
-def _inr(x):
+def inr(x):
     """Indian-grouped amount string: 12,34,567."""
     x = int(round(x))
     neg = x < 0
@@ -513,19 +668,23 @@ def upcoming_lumpy(recurring, as_of=None, horizon_months=3):
         due = _parse_date(r.get("next_due"))
         if not due:
             continue
-        guard = 0
-        while due < as_of and guard < 240:      # roll a stale date forward
+        # Two counters, not one: a next_due left years in the past used to
+        # spend the whole budget rolling forward and then emit nothing, so
+        # the bill silently vanished from the warning.
+        rolled = 0
+        while due < as_of and rolled < 240:     # roll a stale date forward
             due = _add_months(due, step)
-            guard += 1
-        while due <= horizon_end and guard < 240:
+            rolled += 1
+        emitted = 0
+        while due <= horizon_end and emitted < 240:
             out.append({
                 "name": r.get("name"), "amount": float(r.get("amount") or 0),
                 "due_date": due.isoformat(), "frequency": freq,
                 "frequency_label": FREQUENCY_LABELS.get(freq, freq),
                 "counts_as_investment": bool(r.get("counts_as_investment")),
             })
+            emitted += 1
             due = _add_months(due, step)
-            guard += 1
     out.sort(key=lambda x: x["due_date"])
     return out
 
@@ -600,7 +759,7 @@ def suggestions(context):
             "detail": "Liquid assets (savings + liquid funds) are "
                       "%s short of your %s target. Route the surplus "
                       "to a liquid fund / sweep FD until covered."
-                      % (_inr(gap), _inr(ef_target))})
+                      % (inr(gap), inr(ef_target))})
 
     for loan in context.get("loans", []):
         if loan.get("annual_rate", 0) >= 10.0 and loan.get("principal_outstanding", 0) > 0:
@@ -616,13 +775,13 @@ def suggestions(context):
         out.append({
             "priority": 2, "title": "Section 80C headroom (old regime)",
             "detail": "%s of the \u20b91,50,000 80C limit is unused this FY "
-                      "(ELSS / PPF / EPF top-up count)." % _inr(150000 - used_80c)})
+                      "(ELSS / PPF / EPF top-up count)." % inr(150000 - used_80c)})
     used_1b = context.get("tax_80ccd1b_used")
     if used_1b is not None and used_1b < 50000:
         out.append({
             "priority": 2, "title": "NPS 80CCD(1B) headroom (old regime)",
             "detail": "%s of the extra \u20b950,000 NPS deduction is unused "
-                      "this FY." % _inr(50000 - used_1b)})
+                      "this FY." % inr(50000 - used_1b)})
 
     drift = context.get("drift", [])
     under = [d for d in drift if d["drift_pct"] < -2.0 and d["target_pct"] > 0]
@@ -634,7 +793,7 @@ def suggestions(context):
         # what it actually is: a direction for new money.
         months = gap / surplus if surplus > 0 else None
         pace = ("about %.0f months of your %s/month surplus"
-                % (months, _inr(surplus))) if months and months >= 1 else (
+                % (months, inr(surplus))) if months and months >= 1 else (
             "well inside one month of your surplus")
         out.append({
             "priority": 2,
@@ -643,7 +802,7 @@ def suggestions(context):
                       "Steer new monthly money towards %s rather than moving a "
                       "lump sum; if the target itself no longer fits your "
                       "horizon, change the target instead."
-                      % (worst["actual_pct"], worst["target_pct"], _inr(gap),
+                      % (worst["actual_pct"], worst["target_pct"], inr(gap),
                          pace, worst["bucket"])})
 
     idle = context.get("idle_savings", 0.0)
@@ -653,14 +812,14 @@ def suggestions(context):
             "priority": 3, "title": "Idle money in savings accounts",
             "detail": "%s sits in savings beyond your %s float. A "
                       "liquid fund or sweep FD earns 2-4%% more with "
-                      "similar access." % (_inr(idle - threshold), _inr(threshold))})
+                      "similar access." % (inr(idle - threshold), inr(threshold))})
 
     if not out:
         out.append({
             "priority": 3, "title": "On track",
             "detail": "Emergency fund covered, allocation within band, no "
                       "expensive debt. Continue SIPs and invest the surplus "
-                      "of %s/month per your target allocation." % _inr(surplus)})
+                      "of %s/month per your target allocation." % inr(surplus)})
     out.sort(key=lambda s: s["priority"])
     return out
 
@@ -684,27 +843,94 @@ def amortization_schedule(principal, annual_rate_pct, emi, max_months=600):
     return rows, month
 
 
+def _grow(amount, annual_rate_pct, months):
+    return amount * (1 + annual_rate_pct / 100.0) ** (months / 12.0)
+
+
+def _sip_value(monthly, annual_rate_pct, months):
+    """Future value of `monthly` invested at each month end."""
+    if months <= 0 or not monthly:
+        return 0.0
+    r = (1 + annual_rate_pct / 100.0) ** (1 / 12.0) - 1
+    if r == 0:
+        return monthly * months
+    return monthly * ((1 + r) ** months - 1) / r
+
+
 def prepay_vs_invest(principal, annual_rate_pct, emi, lumpsum,
                      invest_return_pct):
-    """Compare prepaying `lumpsum` against investing it.
+    """Which leaves you better off: prepaying the loan, or investing?
 
-    Returns dict with interest saved + months shaved by prepaying, and the
-    future value of investing the lumpsum over the loan's remaining life.
+    Comparing summed interest saved against a compounded investment gain --
+    which is what this used to do -- is comparing two different things: one
+    is nominal rupees spread over years, the other is a terminal figure, and
+    a rupee saved in year 17 is not a rupee today. It also handed the whole
+    benefit of the freed EMI to the investing side, when prepaying is
+    precisely what frees an EMI early.
+
+    So both strategies are run to the same horizon (the original payoff
+    date) and their terminal net worth is compared:
+
+      * prepay -- shorter schedule, then the whole EMI is invested from the
+        early payoff to the horizon;
+      * invest -- the lumpsum is invested, the EMI keeps being paid to the
+        original end, and nothing is freed.
+
+    Also returns the breakeven return: the rate at which the two strategies
+    tie. That is the number that survives a disagreement about "12%", since
+    the reader can judge it against their own expectation.
     """
-    base_rows, base_months = amortization_schedule(principal, annual_rate_pct, emi)
+    base_rows, base_months = amortization_schedule(principal, annual_rate_pct,
+                                                   emi)
     if base_months is None:
         return None
-    base_interest = sum(r["interest"] for r in base_rows)
     pre_rows, pre_months = amortization_schedule(
         max(principal - lumpsum, 0.0), annual_rate_pct, emi)
+    if pre_months is None:
+        return None
+    base_interest = sum(r["interest"] for r in base_rows)
     pre_interest = sum(r["interest"] for r in pre_rows)
-    years = base_months / 12.0
-    fv_invest = lumpsum * (1 + invest_return_pct / 100.0) ** years
+    months_saved = base_months - pre_months
+
+    def terminal(rate_pct):
+        # Prepay: debt-free at pre_months, then the EMI itself is invested.
+        prepay_end = _sip_value(emi, rate_pct, months_saved)
+        # Invest: the lumpsum compounds for the whole horizon; the EMI runs
+        # to the original payoff, so nothing is left over to invest.
+        invest_end = _grow(lumpsum, rate_pct, base_months)
+        return prepay_end, invest_end
+
+    prepay_terminal, invest_terminal = terminal(invest_return_pct)
+
+    # Breakeven: the two curves cross at most once in a sane range, so a
+    # bisection is enough. Below the breakeven, prepaying wins.
+    lo, hi = 0.0, 40.0
+    breakeven = None
+    f_lo = (lambda p: p[1] - p[0])(terminal(lo))
+    f_hi = (lambda p: p[1] - p[0])(terminal(hi))
+    if f_lo * f_hi < 0:
+        for _ in range(80):
+            mid = (lo + hi) / 2
+            f_mid = (lambda p: p[1] - p[0])(terminal(mid))
+            if f_lo * f_mid <= 0:
+                hi = mid
+            else:
+                lo, f_lo = mid, f_mid
+        breakeven = round((lo + hi) / 2, 2)
+
     return {"interest_saved": base_interest - pre_interest,
-            "months_saved": base_months - (pre_months or 0),
-            "invest_future_value": fv_invest,
-            "invest_gain": fv_invest - lumpsum,
-            "horizon_months": base_months}
+            "months_saved": months_saved,
+            "payoff_months": pre_months,
+            "horizon_months": base_months,
+            "prepay_terminal": prepay_terminal,
+            "invest_terminal": invest_terminal,
+            "difference": prepay_terminal - invest_terminal,
+            "breakeven_return_pct": breakeven,
+            # Kept for the export's older readers.
+            "invest_future_value": _grow(lumpsum, invest_return_pct,
+                                         base_months),
+            "invest_gain": _grow(lumpsum, invest_return_pct,
+                                 base_months) - lumpsum}
 
 
 # ---------------------------------------------------------------------------

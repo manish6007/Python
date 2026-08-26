@@ -124,18 +124,20 @@ npm run build
 
 # 3. Start — one process serves the app and the API
 cd ../backend
-uvicorn main:app --port 8000
+uvicorn main:app --host 127.0.0.1 --port 8000
 ```
 
-Open <http://localhost:8000>.
+Open <http://localhost:8000>. `--host 127.0.0.1` keeps it off your network;
+the app also refuses any request that did not arrive at a loopback address.
 
 All data lives in `backend/portfolio.db` by default. **Back up that file.**
 Delete it to start over. To keep it elsewhere — an encrypted volume, a synced
 folder — set `PORTFOLIO_DATA_DIR`, or move it from the Privacy page.
 
-For frontend development use two terminals instead — `uvicorn main:app
---reload --port 8000` and `npm run dev` — and open the Vite URL; it proxies
-`/api` to the backend and hot-reloads the UI.
+For frontend development use two terminals instead — `PORTFOLIO_DEV=1 uvicorn
+main:app --reload --port 8000` and `npm run dev` — and open the Vite URL. The
+`PORTFOLIO_DEV=1` is what allows the Vite origin through; without it,
+cross-origin requests are refused (which is the point in production).
 
 ---
 
@@ -210,9 +212,12 @@ non-monthly items puts them in the lumpy-bills warning.
 
 ### Loans
 
-Outstanding, rate, EMI and tenure, plus a **prepay vs invest** comparison that
-shows interest saved and months shaved against the expected return on
-investing the same lump sum instead.
+Outstanding, rate, EMI and tenure, plus a **prepay vs invest** comparison. Both
+strategies are run to the same date and compared on what you would be *worth*
+then — prepaying closes the loan early and the freed EMI is invested for those
+months, which is the half most comparisons leave out. It also reports the
+**breakeven return**: the rate at which the two tie. That is the number to
+argue with, rather than the 12% guess.
 
 ### Insurance
 
@@ -274,8 +279,10 @@ profile erases that whole portfolio, so it asks you to type the name back.
 Assumptions worth knowing, all of them editable:
 
 - **Valuation** — unit-priced assets use units × latest price; FDs compound
-  quarterly from their start date; PPF/EPF/savings accrue from the last
-  balance you entered.
+  quarterly from their start date **and stop at maturity**; PPF/EPF/savings
+  compound annually from the last balance you entered, for at most 18 months,
+  after which the figure is held flat and you are asked for a fresh one.
+  Neither grows by contributions you record separately.
 - **Averages** — income and expenses are each divided by the number of
   calendar months that actually carry entries, not by a fixed window.
 - **Expenses** exclude EMI (which is tracked separately) and include the
@@ -307,6 +314,10 @@ asset-class level, never specific products — and labelled educational.
 
 ## Privacy and security
 
+- **Nothing outside this machine can reach the app.** It refuses requests
+  that did not arrive at localhost, allows no cross-origin access, and rejects
+  cross-site writes. There is no login because there is no boundary to cross;
+  that only holds while the boundary is actually shut, so it is tested.
 - **Your data never leaves your machine.** SQLite files on disk, no accounts,
   no cloud, no telemetry. Outbound requests go only to AMFI and Yahoo for
   prices — and the **Privacy** page shows you every one of them as it
@@ -362,20 +373,17 @@ nominee is often a trustee for the legal heirs rather than the owner.
 ## Testing
 
 ```bash
-cd backend && python -m pytest -q
+cd backend && pytest        # settings live in backend/pyproject.toml
+flake8 .                    # settings live in backend/.flake8
 ```
 
-151 tests covering the analytics, importers, profiles, privacy, the FI
-projection and the family-record documents — valuation, XIRR, cashflow
-averaging, allocation drift and presets, liquidity, reconciliation,
-amortisation, the FI accumulation and drawdown model, goal
-impact, insurance gaps, both CAS layouts, profile isolation, the outbound
-allowlist and offline mode, moving the data folder, and AES-256 encryption
-round-trips.
+CI runs both, plus a frontend build, on every push touching
+`portfolio-tracker/` — see `.github/workflows/portfolio-tracker.yml`.
 
-```bash
-flake8 backend --max-line-length=127
-```
+188 tests. The pure analytics and FI modules, the importers, profiles,
+privacy — and `test_api.py`, which goes through HTTP rather than around it,
+because the host check, the CORS configuration, profile selection from the
+cookie and the session lifecycle only exist on the request path.
 
 ---
 

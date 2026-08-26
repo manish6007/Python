@@ -12,7 +12,17 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "portfolio.db")
+
+def default_db_path():
+    """The default portfolio file, in whichever folder the user chose.
+
+    Resolved on every call rather than fixed at import: this module's whole
+    job is "the data is where you said it is", and a constant captured at
+    import time quietly writes next to the code instead.
+    """
+    import config
+    return os.path.join(config.data_dir(), "portfolio.db")
+
 
 Base = declarative_base()
 
@@ -248,17 +258,41 @@ def _migrate(engine):
 def get_session(path=None):
     """A session on a database file, creating and migrating it on first use.
 
-    path defaults to DB_PATH, the portfolio this installation started with.
+    path defaults to the portfolio file in the configured data folder.
     """
-    path = path or DB_PATH
+    path = path or default_db_path()
     if path not in _factories:
         os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-        engine = create_engine(f"sqlite:///{path}")
+        # FastAPI runs sync endpoints in a threadpool, so several requests
+        # can hit one file at once. Without a busy timeout that surfaces as
+        # "database is locked" the moment a price refresh overlaps a page
+        # load; WAL lets reads continue during a write.
+        engine = create_engine(f"sqlite:///{path}",
+                               connect_args={"timeout": 30})
+        _apply_pragmas(engine)
         Base.metadata.create_all(engine)
         _migrate(engine)
         _engines[path] = engine
         _factories[path] = sessionmaker(bind=engine)
     return _factories[path]()
+
+
+def _apply_pragmas(engine):
+    """Settings SQLite does not default to, and this schema assumes.
+
+    foreign_keys is OFF by default in SQLite, which makes every ForeignKey in
+    the models decorative -- the ORM cascades save us, but a bulk delete
+    would orphan rows.
+    """
+    from sqlalchemy import event
+
+    @event.listens_for(engine, "connect")
+    def _set(conn, _record):
+        cur = conn.cursor()
+        cur.execute("PRAGMA journal_mode=WAL")
+        cur.execute("PRAGMA foreign_keys=ON")
+        cur.execute("PRAGMA synchronous=NORMAL")
+        cur.close()
 
 
 def reset_engines():

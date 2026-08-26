@@ -12,6 +12,7 @@ from datetime import date, datetime
 from fastapi import (Body, FastAPI, File, Form, HTTPException, Response,
                      UploadFile)
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from contextvars import ContextVar
@@ -34,10 +35,53 @@ from db import (ASSET_CLASS_LABELS, ASSET_CLASSES, ExpenseEntry, Goal,
                 set_setting)
 
 app = FastAPI(title="Portfolio Tracker")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"],
-                   allow_headers=["*"])
+
+# There is no login, by design: this app answers to whoever is at the
+# machine. That only holds while "whoever is at the machine" cannot mean a
+# web page in another tab. Two things keep it true:
+#
+#   * no cross-origin access. In production the frontend is served from this
+#     same origin, so CORS is not needed at all; wildcard CORS would let any
+#     site the user has open read /api/summary or call /api/reset.
+#   * no other host. A request whose Host header is not loopback is either
+#     DNS rebinding or an exposure to the network, and an origin check alone
+#     does not stop the first.
+DEV = os.environ.get("PORTFOLIO_DEV") == "1"
+if DEV:
+    # `npm run dev` serves the UI from another port, so development -- and
+    # only development -- allows that one origin.
+    app.add_middleware(CORSMiddleware,
+                       allow_origins=["http://localhost:5173",
+                                      "http://127.0.0.1:5173"],
+                       allow_credentials=True,
+                       allow_methods=["*"], allow_headers=["*"])
+
+LOCAL_HOSTS = {"localhost", "127.0.0.1", "[::1]", "::1"}
+WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+
+@app.middleware("http")
+async def _local_only(request, call_next):
+    host = (request.headers.get("host") or "").rsplit(":", 1)[0]
+    if host and host not in LOCAL_HOSTS and not DEV:
+        return JSONResponse(
+            {"detail": "This app serves the machine it runs on. Open it at "
+                       "http://localhost:8000."}, status_code=421)
+    # Sec-Fetch-Site is set by the browser and cannot be forged by script, so
+    # it is a free CSRF defence on anything that changes data. Non-browser
+    # callers (curl, scripts) send no such header and are unaffected.
+    site = request.headers.get("sec-fetch-site")
+    if request.method in WRITE_METHODS and site and site != "same-origin":
+        return JSONResponse(
+            {"detail": "Cross-site requests cannot change your data."},
+            status_code=403)
+    return await call_next(request)
 
 _amfi_cache = {"data": {}, "at": None}
+# NAVs change daily. `at` was recorded and never read, so a long-running
+# process served week-old prices to the scheme search forever.
+AMFI_CACHE_HOURS = 12
+MAX_UPLOAD_BYTES = 20_000_000
 _started = datetime.now()
 
 # Which profile the request in hand is for. A cookie carries it rather than a
@@ -51,16 +95,52 @@ _profile = ContextVar("profile", default=profiles_mod.DEFAULT_ID)
 async def _select_profile(request, call_next):
     token = _profile.set(request.cookies.get(PROFILE_COOKIE)
                          or profiles_mod.DEFAULT_ID)
+    opened = []
+    sessions_token = _sessions.set(opened)
+    failed = False
     try:
-        return await call_next(request)
+        response = await call_next(request)
+        failed = response.status_code >= 400
+        return response
+    except Exception:
+        failed = True
+        raise
     finally:
+        _close_sessions(opened, failed)
+        _sessions.reset(sessions_token)
         _profile.reset(token)
+
+
+# Sessions opened while serving one request. Endpoints call db() and mostly
+# close it themselves, but several raise HTTPException between the two -- a
+# 404 lookup, a validation error -- and those paths leaked a connection every
+# time. Registering here means the request cannot end without them closed,
+# whichever way it ends, and closing twice is harmless.
+#
+# A Depends(get_db) would be the idiomatic FastAPI shape. This does the same
+# job without touching all 49 endpoints, and keeps them plain functions that
+# can be called directly from tests.
+_sessions = ContextVar("sessions", default=None)
 
 
 def db():
     s = get_session(profiles_mod.path_for(_profile.get()))
     service.ensure_default_owner(s)
+    open_now = _sessions.get()
+    if open_now is not None:
+        open_now.append(s)
     return s
+
+
+def _close_sessions(opened, failed):
+    for s in opened:
+        try:
+            if failed:
+                s.rollback()             # never leave a half-applied write
+        except Exception:                # pragma: no cover - best effort
+            pass
+        finally:
+            s.close()
 
 
 def parse_date(v):
@@ -87,7 +167,9 @@ def summary():
     agg = data["agg"]
     total_liab = sum(loan["principal_outstanding"] for loan in data["loans"])
     snaps = s.query(Snapshot).order_by(Snapshot.date).all()
-    holdings_out = [service.holding_out(h) for h in s.query(Holding).all()]
+    # full_pipeline already loaded and valued every holding; re-querying and
+    # re-valuing them here doubled the work on the app's busiest endpoint.
+    holdings_out = [service.enrich_holding(dict(h)) for h in data["holdings"]]
     resp = {
         "total_assets": round(agg["total"], 2),
         "total_liabilities": round(total_liab, 2),
@@ -298,6 +380,46 @@ def import_fields():
             "aliases": {k: v[:6] for k, v in imp_mod.COLUMN_ALIASES.items()}}
 
 
+def _cas_preview(data, password, owner):
+    """The CAS half of the import preview.
+
+    Split out so import_preview stays one readable flow: pick the format,
+    parse it, resolve what can be resolved, hand back rows for confirmation.
+    """
+    try:
+        text = imp_mod.extract_cas_text(data, password)
+    except PermissionError as exc:
+        raise HTTPException(401, str(exc))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    rows, notes, layout = imp_mod.parse_cas_any(text, owner=owner)
+    # A CAS names funds by ISIN and never by AMFI code, so resolve the
+    # codes here: without one, NAV refresh cannot price these holdings.
+    resolved = 0
+    if rows:
+        index = pricing.fetch_amfi_isin_index()
+        for r in rows:
+            code = index.get((r.get("isin") or "").upper())
+            if code:
+                r["scheme_code"] = code
+                resolved += 1
+        if index and resolved < len(rows):
+            notes = notes + ["%d of %d schemes could not be matched to an "
+                             "AMFI code, so their NAV will not refresh "
+                             "automatically. Set the code by hand on the "
+                             "Portfolio page."
+                             % (len(rows) - resolved, len(rows))]
+        elif not index:
+            notes = notes + ["AMFI could not be reached, so scheme codes "
+                             "were not resolved. Prices from the "
+                             "statement are used; run Refresh prices "
+                             "later once codes are set."]
+    return {"source": "cas", "layout": layout, "headers": [],
+            "mapping": {}, "mappable": imp_mod.MAPPABLE, "rows": rows,
+            "skipped": [], "notes": notes,
+            "asset_class": "mutual_fund"}
+
+
 @app.post("/api/import/preview")
 async def import_preview(file: UploadFile = File(...),
                          asset_class: str = Form("stock"),
@@ -310,40 +432,15 @@ async def import_preview(file: UploadFile = File(...),
     the column mapping) before anything reaches the portfolio.
     """
     data = await file.read()
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "That file is %d MB. Imports are capped at "
+                                 "%d MB; a CAS or broker export is far "
+                                 "smaller than this."
+                            % (len(data) // 1_000_000,
+                               MAX_UPLOAD_BYTES // 1_000_000))
     name = (file.filename or "").lower()
     if name.endswith(".pdf"):
-        try:
-            text = imp_mod.extract_cas_text(data, password)
-        except PermissionError as exc:
-            raise HTTPException(401, str(exc))
-        except ValueError as exc:
-            raise HTTPException(400, str(exc))
-        rows, notes, layout = imp_mod.parse_cas_any(text, owner=owner)
-        # A CAS names funds by ISIN and never by AMFI code, so resolve the
-        # codes here: without one, NAV refresh cannot price these holdings.
-        resolved = 0
-        if rows:
-            index = pricing.fetch_amfi_isin_index()
-            for r in rows:
-                code = index.get((r.get("isin") or "").upper())
-                if code:
-                    r["scheme_code"] = code
-                    resolved += 1
-            if index and resolved < len(rows):
-                notes = notes + ["%d of %d schemes could not be matched to an "
-                                 "AMFI code, so their NAV will not refresh "
-                                 "automatically. Set the code by hand on the "
-                                 "Portfolio page."
-                                 % (len(rows) - resolved, len(rows))]
-            elif not index:
-                notes = notes + ["AMFI could not be reached, so scheme codes "
-                                 "were not resolved. Prices from the "
-                                 "statement are used; run Refresh prices "
-                                 "later once codes are set."]
-        return {"source": "cas", "layout": layout, "headers": [],
-                "mapping": {}, "mappable": imp_mod.MAPPABLE, "rows": rows,
-                "skipped": [], "notes": notes,
-                "asset_class": "mutual_fund"}
+        return _cas_preview(data, password, owner)
     try:
         headers, records = imp_mod.read_table(data, name)
     except ValueError as exc:
@@ -533,8 +630,13 @@ def refresh_prices():
                 mf_updated += 1
             else:
                 mf_failed.append(h.name)
-    for h in s.query(Holding).filter(Holding.asset_class == "stock"):
-        px, pd_ = pricing.fetch_stock_price(h.identifier or h.name)
+    stocks = list(s.query(Holding).filter(Holding.asset_class == "stock"))
+    # Fetched together and de-duplicated: the same stock held by two people
+    # is one price, and thirty holdings should not mean thirty waits.
+    prices = pricing.fetch_stock_prices(
+        [h.identifier or h.name for h in stocks])
+    for h in stocks:
+        px, pd_ = prices.get(h.identifier or h.name, (None, None))
         if px:
             h.last_price, h.price_date = px, pd_
             stock_updated += 1
@@ -549,9 +651,14 @@ def refresh_prices():
 
 @app.get("/api/amfi/search")
 def amfi_search(q: str):
-    if not _amfi_cache["data"]:
-        _amfi_cache["data"] = pricing.fetch_amfi_navs()
-        _amfi_cache["at"] = datetime.now()
+    fresh = (_amfi_cache["at"] is not None
+             and (datetime.now() - _amfi_cache["at"]).total_seconds()
+             < AMFI_CACHE_HOURS * 3600)
+    if not _amfi_cache["data"] or not fresh:
+        navs = pricing.fetch_amfi_navs()
+        if navs:                          # keep yesterday's rather than none
+            _amfi_cache["data"] = navs
+            _amfi_cache["at"] = datetime.now()
     hits = pricing.search_amfi(_amfi_cache["data"], q)
     return [{"code": c, "name": i["name"], "nav": i["nav"],
              "date": i["date"].isoformat()} for c, i in hits]
@@ -689,8 +796,12 @@ def update_recurring(rid: int, payload: dict = Body(...)):
     if payload.get("amount") is not None:
         r.amount = float(payload["amount"])
     elif payload.get("amount_monthly") is not None:
-        r.amount = analytics.to_monthly(
-            float(payload["amount_monthly"]) * 12, "yearly")
+        # A monthly-equivalent figure has to be scaled up to a per-payment
+        # one, not passed through to_monthly and re-divided by the frequency
+        # below -- that gave a quarterly item a third of the right amount.
+        freq = r.frequency or "monthly"
+        r.amount = (float(payload["amount_monthly"])
+                    * analytics.FREQUENCY_MONTHS.get(freq, 1))
     r.amount_monthly = analytics.to_monthly(r.amount, r.frequency or "monthly")
     if "counts_as_investment" in payload:
         r.counts_as_investment = 1 if payload["counts_as_investment"] else 0
@@ -772,7 +883,8 @@ def prepay_vs_invest(payload: dict = Body(...)):
         float(payload.get("invest_return_pct") or 12.0))
     if res is None:
         raise HTTPException(400, "EMI does not cover the monthly interest")
-    return {k: round(v, 2) for k, v in res.items()}
+    return {k: (round(v, 2) if isinstance(v, (int, float)) else v)
+            for k, v in res.items()}
 
 
 @app.get("/api/loans/{lid}/schedule")
@@ -1060,7 +1172,7 @@ def fi_projection(years: int = 50, inflation_pct: float = None,
     elif payoff_year:
         notes.append("The loan closes in about %d years; from then on %s/year "
                      "of freed EMI is assumed to be invested."
-                     % (payoff_year, analytics._inr(freed_emi)))
+                     % (payoff_year, analytics.inr(freed_emi)))
     s.close()
     return {
         "assumptions": {
@@ -1318,12 +1430,16 @@ def rename_profile(pid: str, payload: dict = Body(...)):
 
 
 @app.delete("/api/profiles/{pid}")
-def delete_profile(pid: str, confirm: str = ""):
+def delete_profile(pid: str, payload: dict = Body(default=None),
+                   confirm: str = ""):
     """Delete a profile and its data file.
 
     Deleting takes the whole portfolio with it, so the caller has to send the
     profile's own name back as confirmation -- the same bar as Erase all data.
+    It travels in the body: a profile name in the query string ends up in
+    browser history and the server's access log.
     """
+    confirm = ((payload or {}).get("confirm") or confirm)
     p = profiles_mod.get(pid)
     if p["id"] != pid:
         raise HTTPException(404, "No such profile.")
@@ -1385,6 +1501,7 @@ def reset_all(payload: dict = Body(...)):
                   ExpenseEntry, Snapshot, Owner):
         s.query(model).delete()
     s.commit()
+    service.forget_owner_check(s)     # the default owner just went with it
     service.ensure_default_owner(s)
     s.close()
     return {"ok": True}

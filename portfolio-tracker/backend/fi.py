@@ -101,9 +101,12 @@ def project(corpus_by_bucket, annual_investment, annual_expense, *,
             crossover = t
     return {"rows": rows, "years_to_fi": crossover,
             "fi_number_today": round(annual_expense * swr_multiple, 2),
-            "corpus_at_fi": round(rows[crossover]["corpus"], 2) if crossover else None,
+            # `if crossover` would be falsy at year 0 -- someone already FI
+            # -- which is exactly the case the crossover search handles.
+            "corpus_at_fi": (round(rows[crossover]["corpus"], 2)
+                             if crossover is not None else None),
             "corpus_at_fi_real": (round(rows[crossover]["corpus_real"], 2)
-                                  if crossover else None)}
+                                  if crossover is not None else None)}
 
 
 def scenarios(corpus_by_bucket, annual_investment, annual_expense, *,

@@ -356,7 +356,7 @@ def test_refresh_prices_resolves_a_cas_fund_by_its_isin(tmp_path, monkeypatch):
     monkeypatch.setattr(pricing, "fetch_amfi", lambda *a, **k: (
         {"120503": {"name": "Axis ELSS", "nav": 112.6609,
                     "date": _date(2026, 8, 25)}},
-        {"INF846K01EW2": "120503"}))
+        {"INF846K01EW2": "120503"}, pricing.AMFI_OK))
     out = main.refresh_prices()
     assert out["mf_updated"] == 1 and out["mf_failed"] == []
 
@@ -388,6 +388,7 @@ def test_refresh_prices_names_the_funds_it_could_not_price(tmp_path,
     s.commit()
     s.close()
     monkeypatch.setattr(pricing, "fetch_amfi", lambda *a, **k: (
-        {"999": {"name": "Other", "nav": 1.0, "date": _date(2026, 8, 25)}}, {}))
+        {"999": {"name": "Other", "nav": 1.0, "date": _date(2026, 8, 25)}},
+        {}, pricing.AMFI_OK))
     out = main.refresh_prices()
     assert out["mf_updated"] == 0 and out["mf_failed"] == ["Some Fund"]

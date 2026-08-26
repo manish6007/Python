@@ -4,7 +4,7 @@ All fetchers fail soft (return {} / None) so the app keeps working offline
 with last-known or manual prices.
 """
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import date, datetime
 from urllib.parse import quote, urlparse
 
 import requests
@@ -70,7 +70,7 @@ def explain(exc):
     return str(exc)
 
 
-def _get(url, timeout):
+def _get(url, timeout, head_bytes=0):
     """Fetch a URL, but only one the app is allowed to contact, and log it.
 
     Every outbound call goes through here so the log in the app is the whole
@@ -85,8 +85,11 @@ def _get(url, timeout):
     if config.offline():
         netlog.record(host, purpose, "blocked", "offline mode is on")
         raise Offline("Offline mode is on, so nothing was fetched.")
+    headers = dict(BROWSER_HEADERS)
+    if head_bytes:
+        headers["Range"] = "bytes=0-%d" % (head_bytes - 1)
     try:
-        resp = requests.get(url, timeout=timeout, headers=BROWSER_HEADERS)
+        resp = requests.get(url, timeout=timeout, headers=headers)
         resp.raise_for_status()
     except requests.RequestException as exc:
         netlog.record(host, purpose, "failed", explain(exc))
@@ -109,7 +112,10 @@ def check_hosts(timeout=10):
         host = urlparse(url).hostname
         row = {"host": host, "label": label}
         try:
-            resp = _get(url, timeout)
+            # The NAV file is over a megabyte. Asking for the first few
+            # kilobytes proves reachability without pulling it twice, and
+            # without making a diagnostic look like heavy use to AMFI.
+            resp = _get(url, timeout, head_bytes=4096)
             row.update(ok=True, detail="%d bytes received" % len(resp.content))
         except Offline as exc:
             row.update(ok=False, detail=str(exc))
@@ -117,6 +123,31 @@ def check_hosts(timeout=10):
             row.update(ok=False, detail=explain(exc))
         out.append(row)
     return out
+
+
+# AMFI writes English month abbreviations. datetime.strptime("%b") reads
+# them through the machine's LC_TIME, so on a system set to any other
+# language every single row fails to parse -- the file downloads perfectly
+# and yields nothing. Parsed by hand so the answer does not depend on which
+# country the laptop is configured for.
+MONTHS = {m: i + 1 for i, m in enumerate(
+    ["jan", "feb", "mar", "apr", "may", "jun",
+     "jul", "aug", "sep", "oct", "nov", "dec"])}
+
+
+def parse_nav_date(token):
+    """'26-Aug-2026' -> date(2026, 8, 26). None when it is not that."""
+    parts = (token or "").split("-")
+    if len(parts) != 3:
+        return None
+    day, mon, year = parts
+    month = MONTHS.get(mon.strip().lower()[:3])
+    if not month:
+        return None
+    try:
+        return date(int(year), month, int(day))
+    except ValueError:
+        return None
 
 
 def parse_amfi_dump(text):
@@ -134,10 +165,12 @@ def parse_amfi_dump(text):
         if len(parts) < 6 or not parts[0].strip().isdigit():
             continue
         code, isin1, isin2, name, nav, nav_date = [p.strip() for p in parts[:6]]
+        d = parse_nav_date(nav_date)
         try:
             nav_f = float(nav)
-            d = datetime.strptime(nav_date, "%d-%b-%Y").date()
         except ValueError:
+            continue
+        if d is None:
             continue
         navs[code] = {"name": name, "nav": nav_f, "date": d}
         for isin in (isin1, isin2):
@@ -146,18 +179,54 @@ def parse_amfi_dump(text):
     return navs, by_isin
 
 
+def diagnose_dump(text):
+    """Why a downloaded NAV file yielded no rows.
+
+    Reached only when the download worked and the parse produced nothing --
+    a case that used to be reported as "AMFI could not be reached", sending
+    people to check a connection that had just delivered a megabyte.
+    """
+    lines = (text or "").splitlines()
+    if not lines:
+        return "the file came back empty."
+    candidates = [ln for ln in lines
+                  if ln.split(";")[0].strip().isdigit() and ln.count(";") >= 5]
+    if not candidates:
+        head = " / ".join(ln.strip() for ln in lines[:3] if ln.strip())[:200]
+        return ("nothing in the file looked like a NAV row (%d lines). It "
+                "starts: %s" % (len(lines), head or "(blank)"))
+    sample = candidates[0].split(";")
+    return ("%d rows looked right but none could be read. The first is "
+            "code=%s nav=%r date=%r -- one of those two values is not in the "
+            "format expected." % (len(candidates), sample[0].strip(),
+                                  sample[4].strip(), sample[5].strip()))
+
+
+# What happened on the last AMFI fetch: "ok", "unreachable" or "unreadable".
+# Downloading a megabyte and understanding none of it is a different problem
+# from not reaching the server, and needs a different thing done about it.
+AMFI_OK, AMFI_UNREACHABLE, AMFI_UNREADABLE = "ok", "unreachable", "unreadable"
+
+
 def fetch_amfi(timeout=30):
     """Download today's dump once and return both views of it.
 
-    ({scheme_code: {"name", "nav", "date"}}, {ISIN: scheme_code}). The file
-    is several megabytes, so a caller that wants both -- a price refresh that
-    also has to resolve ISINs -- should not fetch it twice.
+    ({scheme_code: ...}, {ISIN: scheme_code}, status). The file is over a
+    megabyte, so a caller that wants both -- a price refresh that also has to
+    resolve ISINs -- should not fetch it twice.
     """
     try:
         resp = _get(AMFI_NAV_URL, timeout)
     except (requests.RequestException, Offline):
-        return {}, {}
-    return parse_amfi_dump(resp.text)
+        return {}, {}, AMFI_UNREACHABLE
+    navs, by_isin = parse_amfi_dump(resp.text)
+    if not navs:
+        why = diagnose_dump(resp.text)
+        netlog.record(urlparse(AMFI_NAV_URL).hostname,
+                      netlog.purpose_for(urlparse(AMFI_NAV_URL).hostname),
+                      "unreadable", why)
+        return {}, {}, AMFI_UNREADABLE
+    return navs, by_isin, AMFI_OK
 
 
 def fetch_amfi_navs(timeout=30):

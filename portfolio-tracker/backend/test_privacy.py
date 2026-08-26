@@ -42,7 +42,7 @@ def test_offline_mode_blocks_the_request_and_says_so(store, monkeypatch):
         raise AssertionError("a connection was opened while offline")
     monkeypatch.setattr(pricing.requests, "get", explode)
     config.set_offline(True)
-    assert pricing.fetch_amfi() == ({}, {})
+    assert pricing.fetch_amfi() == ({}, {}, pricing.AMFI_UNREACHABLE)
     entry = netlog.entries()[0]
     assert entry["outcome"] == "blocked" and "offline" in entry["detail"]
 
@@ -61,8 +61,8 @@ def test_a_successful_fetch_is_logged_with_its_host_and_purpose(store,
         def raise_for_status(self):
             pass
     monkeypatch.setattr(pricing.requests, "get", lambda *a, **k: Resp())
-    navs, _ = pricing.fetch_amfi()
-    assert navs
+    navs, _, status = pricing.fetch_amfi()
+    assert navs and status == pricing.AMFI_OK
     entry = netlog.entries()[0]
     assert entry["host"] == "www.amfiindia.com"
     assert entry["outcome"] == "ok"
@@ -73,7 +73,7 @@ def test_a_failed_fetch_is_logged_rather_than_swallowed(store, monkeypatch):
     def boom(*a, **k):
         raise pricing.requests.RequestException("no route to host")
     monkeypatch.setattr(pricing.requests, "get", boom)
-    assert pricing.fetch_amfi() == ({}, {})
+    assert pricing.fetch_amfi() == ({}, {}, pricing.AMFI_UNREACHABLE)
     assert netlog.entries()[0]["outcome"] == "failed"
 
 
@@ -260,3 +260,61 @@ def test_the_connection_test_says_so_when_offline(store, monkeypatch):
     config.set_offline(True)
     rows = pricing.check_hosts(timeout=1)
     assert all("Offline mode" in r["detail"] for r in rows)
+
+
+# ---- a file that arrives but cannot be read is not "unreachable" ---------
+def test_month_names_are_read_without_depending_on_the_locale(store):
+    """strptime("%b") goes through LC_TIME, so on a machine set to another
+    language every row silently failed and the download looked unreachable."""
+    from datetime import date as _date
+    assert pricing.parse_nav_date("26-Aug-2026") == _date(2026, 8, 26)
+    assert pricing.parse_nav_date("1-Jan-2020") == _date(2020, 1, 1)
+    assert pricing.parse_nav_date("26-Août-2026") is None
+    assert pricing.parse_nav_date("nonsense") is None
+    assert pricing.parse_nav_date("32-Aug-2026") is None
+
+
+def test_a_downloaded_but_unreadable_file_says_so(store, monkeypatch):
+    """1.5 MB arrived and none of it parsed -- that is not a network fault."""
+    class Resp:
+        content = b"x" * 1500
+        text = ("Scheme Code;ISIN;ISIN2;Name;NAV;Date\n"
+                "120503;A;B;Axis ELSS;112.66;26-Aou-2026\n")
+
+        def raise_for_status(self):
+            pass
+    monkeypatch.setattr(pricing.requests, "get", lambda *a, **k: Resp())
+    navs, by_isin, status = pricing.fetch_amfi()
+    assert navs == {} and status == pricing.AMFI_UNREADABLE
+    assert status != pricing.AMFI_UNREACHABLE
+    entry = netlog.entries()[0]
+    assert entry["outcome"] == "unreadable"
+    assert "none could be read" in entry["detail"]
+
+
+def test_the_diagnosis_names_what_actually_arrived(store):
+    assert "empty" in pricing.diagnose_dump("")
+    html = pricing.diagnose_dump("<html><body>Access denied</body></html>")
+    assert "nothing in the file looked like a NAV row" in html
+    assert "Access denied" in html
+
+
+def test_the_connection_test_does_not_download_the_whole_file(store,
+                                                              monkeypatch):
+    seen = {}
+
+    class Resp:
+        content = b"x" * 4096
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {}
+
+    def fake_get(url, timeout=None, headers=None):
+        seen.setdefault("ranges", []).append((headers or {}).get("Range"))
+        return Resp()
+    monkeypatch.setattr(pricing.requests, "get", fake_get)
+    pricing.check_hosts(timeout=1)
+    assert all(r == "bytes=0-4095" for r in seen["ranges"])

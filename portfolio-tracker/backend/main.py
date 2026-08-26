@@ -639,7 +639,7 @@ def portfolio_xirr():
 @app.post("/api/prices/refresh")
 def refresh_prices():
     s = db()
-    navs, by_isin = pricing.fetch_amfi()
+    navs, by_isin, amfi_status = pricing.fetch_amfi()
     mf_updated = stock_updated = 0
     failed, mf_failed = [], []
     if navs:
@@ -686,8 +686,9 @@ def refresh_prices():
     # The reason the last attempt failed, so the answer is in the message
     # rather than three clicks away on the Privacy page.
     reason = next((e["detail"] for e in netlog.entries()
-                   if e["outcome"] in ("failed", "refused")), "")
-    return {"amfi_reachable": bool(navs), "offline": config_mod.offline(),
+                   if e["outcome"] in ("failed", "refused", "unreadable")), "")
+    return {"amfi_reachable": amfi_status == pricing.AMFI_OK,
+            "amfi_status": amfi_status, "offline": config_mod.offline(),
             "mf_updated": mf_updated, "mf_failed": mf_failed,
             "stocks_updated": stock_updated, "stock_failed": failed,
             "stock_no_ticker": no_ticker, "reason": reason}

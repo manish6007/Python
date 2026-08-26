@@ -67,7 +67,10 @@ export default function Portfolio({ summary, meta, owners, reload }) {
       const r = await api.post('/api/prices/refresh')
       const bits = [`MF NAVs updated: ${r.mf_updated}`,
         `stocks updated: ${r.stocks_updated}`]
-      const everythingFailed = !r.amfi_reachable && r.stocks_updated === 0
+      // "Unreadable" is a data problem, not a network one, so it must not
+      // be swept into the everything-failed branch.
+      const everythingFailed = r.amfi_status === 'unreachable'
+        && r.stocks_updated === 0
       if (r.offline) {
         bits.push('offline mode is on, so nothing was fetched. Turn it off on'
           + ' the Privacy page to refresh prices.')
@@ -79,7 +82,14 @@ export default function Portfolio({ summary, meta, owners, reload }) {
           + ' Open Privacy → Test connection for the details. Prices are'
           + ' left exactly as they were.')
       } else {
-        if (!r.amfi_reachable) {
+        if (r.amfi_status === 'unreadable') {
+          // The file arrived and none of it parsed. Telling someone to
+          // check their connection here wastes their afternoon.
+          bits.push('the NAV file downloaded but could not be read'
+            + (r.reason ? ' — ' + r.reason : '')
+            + ' Nothing is wrong with your connection; AMFI\u2019s format has'
+            + ' probably changed. Prices are left as they were.')
+        } else if (!r.amfi_reachable) {
           bits.push('AMFI could not be reached'
             + (r.reason ? ' — ' + r.reason : '.'))
         } else if (r.mf_failed?.length) {

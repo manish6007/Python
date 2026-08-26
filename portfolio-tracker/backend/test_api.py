@@ -335,3 +335,22 @@ def test_the_app_notices_when_the_server_is_older_than_the_code(client,
 
     monkeypatch.setattr(main, "_started", datetime.now() - timedelta(days=365))
     assert client.get("/api/meta").json()["stale_backend"] is True
+
+
+def test_a_readable_nav_file_and_an_unreadable_one_report_differently(client,
+                                                                      monkeypatch):
+    """"AMFI could not be reached" for a file that downloaded fine sent
+    someone to check a connection that had just delivered a megabyte."""
+    import pricing
+
+    monkeypatch.setattr(pricing, "fetch_amfi",
+                        lambda *a, **k: ({}, {}, pricing.AMFI_UNREACHABLE))
+    body = client.post("/api/prices/refresh").json()
+    assert body["amfi_status"] == "unreachable"
+    assert body["amfi_reachable"] is False
+
+    monkeypatch.setattr(pricing, "fetch_amfi",
+                        lambda *a, **k: ({}, {}, pricing.AMFI_UNREADABLE))
+    body = client.post("/api/prices/refresh").json()
+    assert body["amfi_status"] == "unreadable"
+    assert body["amfi_reachable"] is False      # still no NAVs, different why

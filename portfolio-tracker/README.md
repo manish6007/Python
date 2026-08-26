@@ -38,8 +38,11 @@ search.
 Zerodha, Groww, Upstox, Angel One, ICICI Direct and most others, CSV or XLSX.
 The column headings brokers use are recognised automatically, the guessed
 mapping is shown for you to correct, and you confirm the rows before anything
-is saved. A CAMS/KFintech consolidated account statement PDF brings in every
-mutual-fund folio across both registrars in one go.
+is saved. A CAMS/KFintech statement PDF brings in every mutual-fund folio across both
+registrars in one go — both the Consolidated Account Summary table and the
+detailed statement are understood, scheme codes are resolved from each ISIN so
+NAVs refresh by themselves afterwards, and the parsed totals are checked
+against the statement's own Total row so a partial read cannot pass silently.
 
 ### Understand your allocation
 Holdings roll up into buckets (equity, debt, gold, real estate, cash) which

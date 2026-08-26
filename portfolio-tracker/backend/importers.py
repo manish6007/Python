@@ -307,3 +307,136 @@ def parse_cas(text, owner="Me"):
                      "otherwise the format may have changed — the CSV route "
                      "still works.")
     return rows, sorted(set(notes))
+
+# --------------------------------------------------------------------------
+# CAS "Consolidated Account Summary" -- the table format
+#
+# Columns: Folio No. | ISIN | Scheme Name | Cost Value | Unit Balance |
+#          NAV Date | NAV | Market Value | Registrar
+#
+# Extracted text wraps scheme names over several lines and often runs the
+# folio straight into the ISIN, so rows are anchored on the ISIN -- exactly
+# one per holding, and unmistakable -- rather than on line breaks. Every
+# money column carries decimals while the digits inside scheme names
+# ("NASDAQ 100", "Nifty 50", the registrar's "128TSDGG" prefix) do not, which
+# is what makes the four numbers at the end of a row safe to read positionally.
+# --------------------------------------------------------------------------
+
+
+# Indian ISINs are IN + E/F/9 + 9 more. A word boundary cannot be used at
+# the start: extracted text frequently glues the folio to the ISIN with no
+# space ("90722941761/0INF846K01EW2"), which silently dropped those rows.
+ISIN_TOKEN = re.compile(r"(?<![A-Z])IN[EF0-9][A-Z0-9]{9}(?![A-Z0-9])")
+DECIMAL_TOKEN = re.compile(r"\d[\d,]*\.\d+")
+NAV_DATE_TOKEN = re.compile(r"\d{2}-[A-Za-z]{3}-\d{4}")
+SCHEME_CODE_PREFIX = re.compile(r"^[A-Z0-9]{2,12}\s*[-\u2013]\s*")
+REGISTRAR_TOKEN = re.compile(r"\b(CAMS|KFINTECH|KARVY)\b", re.I)
+
+
+def _clean_scheme(text):
+    text = re.sub(r"\s+", " ", text).strip(" -\u2013:")
+    text = SCHEME_CODE_PREFIX.sub("", text)          # drop "128TSDGG - "
+    text = re.sub(r"\((?:Non[\s-]?Demat|Demat)\)", "", text, flags=re.I)
+    return re.sub(r"\s+", " ", text).strip(" -\u2013:,")
+
+
+def parse_cas_summary(text, owner="Me"):
+    """Holdings from a Consolidated Account Summary.
+
+    Returns (rows, notes). Anything that cannot be read is reported rather
+    than guessed at, and the caller confirms every row before import.
+    """
+    lines = [ln for ln in (text or "").splitlines() if ln.strip()]
+    anchors = [i for i, ln in enumerate(lines) if ISIN_TOKEN.search(ln)]
+    rows, notes = [], []
+    for n, start in enumerate(anchors):
+        end = anchors[n + 1] if n + 1 < len(anchors) else len(lines)
+        block_text = " ".join(lines[start:end])
+        isin_m = ISIN_TOKEN.search(block_text)
+        isin = isin_m.group(0)
+        before, after = block_text[:isin_m.start()], block_text[isin_m.end():]
+
+        # Folio is whatever sits left of the ISIN, often glued to it.
+        folio = re.sub(r"\s+", "", before).strip()
+        folio = re.sub(r"^(?:Folio\s*No\.?:?)", "", folio, flags=re.I).strip()
+
+        nums = DECIMAL_TOKEN.findall(after)
+        if len(nums) < 4:
+            notes.append("A row for ISIN %s had %d numeric columns, not the "
+                         "expected four — check it in the preview."
+                         % (isin, len(nums)))
+            continue
+        cost, units, nav, market = (to_number(x) for x in nums[:4])
+        if not units or units <= 0:
+            continue                       # exited scheme, nothing held
+
+        scheme = _clean_scheme(after[:after.find(nums[0])])
+        date_m = NAV_DATE_TOKEN.search(after)
+        registrar_m = REGISTRAR_TOKEN.search(after)
+        if not scheme:
+            scheme = "Scheme (name not read)"
+            notes.append("A scheme name could not be read for ISIN %s — set "
+                         "it by hand after importing." % isin)
+        rows.append({
+            "owner": owner, "asset_class": "mutual_fund",
+            "name": scheme[:120], "identifier": folio[:60], "isin": isin,
+            "units": round(units, 4),
+            "avg_cost": round(cost / units, 4) if cost and units else 0.0,
+            "last_price": round(nav or 0.0, 4),
+            "invested": round(cost or 0.0, 2),
+            "current_value": round(market or (units * (nav or 0)), 2),
+            "nav_date": date_m.group(0) if date_m else "",
+            "registrar": registrar_m.group(1).upper() if registrar_m else "",
+            "purchase_date": "",
+        })
+    return rows, sorted(set(notes))
+
+
+TOTAL_ROW = re.compile(r"Total\s+(\d[\d,]*\.\d+)\s+(\d[\d,]*\.\d+)", re.I)
+
+
+def check_against_total(text, rows):
+    """Compare what was parsed against the statement's own Total row.
+
+    A parser that quietly drops rows is worse than one that fails loudly, and
+    the summary prints its own totals, so there is no excuse for not checking.
+    """
+    m = TOTAL_ROW.search(text or "")
+    if not m:
+        return []
+    stated_cost, stated_market = to_number(m.group(1)), to_number(m.group(2))
+    got_cost = sum(r["invested"] for r in rows)
+    got_market = sum(r["current_value"] for r in rows)
+    notes = []
+    for label, stated, got in (("cost", stated_cost, got_cost),
+                               ("market value", stated_market, got_market)):
+        if stated and abs(stated - got) > max(1.0, stated * 0.005):
+            notes.append(
+                "The statement's total %s is %s but the rows read add up to "
+                "%s — a difference of %s. Some holdings were not read; check "
+                "the preview against your statement before importing."
+                % (label, _fmt(stated), _fmt(got), _fmt(abs(stated - got))))
+    return notes
+
+
+def _fmt(x):
+    return "{:,.2f}".format(x or 0)
+
+
+def parse_cas_any(text, owner="Me"):
+    """Try the summary table first, then the detailed statement layout.
+
+    CAMS and KFintech issue both; people request whichever they find, so the
+    importer should not care which arrived.
+    """
+    rows, notes = parse_cas_summary(text, owner=owner)
+    if rows:
+        return rows, sorted(set(notes + check_against_total(text, rows))), \
+            "summary"
+    rows, notes = parse_cas(text, owner=owner)
+    if rows:
+        return rows, notes, "detailed"
+    return [], ["No holdings could be read. This importer understands the "
+                "CAMS/KFintech Consolidated Account Summary table and the "
+                "detailed statement; if yours looks different, the broker "
+                "CSV route still works."], "unknown"

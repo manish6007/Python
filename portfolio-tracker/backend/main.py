@@ -295,9 +295,30 @@ async def import_preview(file: UploadFile = File(...),
             raise HTTPException(401, str(exc))
         except ValueError as exc:
             raise HTTPException(400, str(exc))
-        rows, notes = imp_mod.parse_cas(text, owner=owner)
-        return {"source": "cas", "headers": [], "mapping": {},
-                "mappable": imp_mod.MAPPABLE, "rows": rows,
+        rows, notes, layout = imp_mod.parse_cas_any(text, owner=owner)
+        # A CAS names funds by ISIN and never by AMFI code, so resolve the
+        # codes here: without one, NAV refresh cannot price these holdings.
+        resolved = 0
+        if rows:
+            index = pricing.fetch_amfi_isin_index()
+            for r in rows:
+                code = index.get((r.get("isin") or "").upper())
+                if code:
+                    r["scheme_code"] = code
+                    resolved += 1
+            if index and resolved < len(rows):
+                notes = notes + ["%d of %d schemes could not be matched to an "
+                                 "AMFI code, so their NAV will not refresh "
+                                 "automatically. Set the code by hand on the "
+                                 "Portfolio page."
+                                 % (len(rows) - resolved, len(rows))]
+            elif not index:
+                notes = notes + ["AMFI could not be reached, so scheme codes "
+                                 "were not resolved. Prices from the "
+                                 "statement are used; run Refresh prices "
+                                 "later once codes are set."]
+        return {"source": "cas", "layout": layout, "headers": [],
+                "mapping": {}, "mappable": imp_mod.MAPPABLE, "rows": rows,
                 "skipped": [], "notes": notes,
                 "asset_class": "mutual_fund"}
     try:
@@ -351,9 +372,19 @@ def import_commit(payload: dict = Body(...)):
                 meta["purchase_date"] = r["purchase_date"]
             if cls == "mutual_fund":
                 meta["category"] = r.get("category") or "equity"
+            for k in ("isin", "registrar"):
+                if r.get(k):
+                    meta[k] = r[k]
+            # The AMFI code is what prices a fund, so it wins the identifier
+            # slot; the folio stays in meta where the family record finds it.
+            ident = (r.get("identifier") or "").strip()
+            if r.get("scheme_code"):
+                if ident:
+                    meta["folio"] = ident
+                ident = r["scheme_code"]
             h = Holding(owner_id=owners[oname], asset_class=cls,
                         name=(r.get("name") or "").strip(),
-                        identifier=(r.get("identifier") or "").strip(),
+                        identifier=ident,
                         units=float(r.get("units") or 0),
                         avg_cost=float(r.get("avg_cost") or 0),
                         last_price=float(r.get("last_price") or 0),

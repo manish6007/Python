@@ -10,6 +10,33 @@ import requests
 AMFI_NAV_URL = "https://www.amfiindia.com/spages/NAVAll.txt"
 
 
+def parse_amfi_dump(text):
+    """Parse AMFI's NAVAll.txt.
+
+    Layout is semicolon-separated:
+      Scheme Code;ISIN Div Payout/Growth;ISIN Div Reinvestment;Scheme Name;NAV;Date
+
+    Both ISIN columns are kept so a CAS -- which identifies funds by ISIN and
+    never by AMFI code -- can be resolved to the code that NAV refresh needs.
+    """
+    navs, by_isin = {}, {}
+    for line in text.splitlines():
+        parts = line.split(";")
+        if len(parts) < 6 or not parts[0].strip().isdigit():
+            continue
+        code, isin1, isin2, name, nav, nav_date = [p.strip() for p in parts[:6]]
+        try:
+            nav_f = float(nav)
+            d = datetime.strptime(nav_date, "%d-%b-%Y").date()
+        except ValueError:
+            continue
+        navs[code] = {"name": name, "nav": nav_f, "date": d}
+        for isin in (isin1, isin2):
+            if isin and isin.upper() not in ("N.A.", "NA", "-"):
+                by_isin[isin.upper()] = code
+    return navs, by_isin
+
+
 def fetch_amfi_navs(timeout=30):
     """Download today's AMFI NAV dump.
 
@@ -20,19 +47,19 @@ def fetch_amfi_navs(timeout=30):
         resp.raise_for_status()
     except requests.RequestException:
         return {}
-    navs = {}
-    for line in resp.text.splitlines():
-        parts = line.split(";")
-        if len(parts) < 6 or not parts[0].strip().isdigit():
-            continue
-        code, _, _, name, nav, nav_date = [p.strip() for p in parts[:6]]
-        try:
-            nav_f = float(nav)
-            d = datetime.strptime(nav_date, "%d-%b-%Y").date()
-        except ValueError:
-            continue
-        navs[code] = {"name": name, "nav": nav_f, "date": d}
+    navs, _ = parse_amfi_dump(resp.text)
     return navs
+
+
+def fetch_amfi_isin_index(timeout=30):
+    """{ISIN: AMFI scheme code}, so CAS holdings can price themselves."""
+    try:
+        resp = requests.get(AMFI_NAV_URL, timeout=timeout)
+        resp.raise_for_status()
+    except requests.RequestException:
+        return {}
+    _, by_isin = parse_amfi_dump(resp.text)
+    return by_isin
 
 
 def search_amfi(navs, query, limit=20):

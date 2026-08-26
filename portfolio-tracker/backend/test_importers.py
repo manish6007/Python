@@ -169,3 +169,68 @@ def test_cas_wrong_password_is_reported_clearly():
     with pytest.raises(PermissionError):
         imp.extract_cas_text(out.getvalue(), "wrong-one")
     assert "Folio No" in imp.extract_cas_text(out.getvalue(), "right-one")
+
+
+# ---- CAS summary (the table layout CAMS/KFintech actually sends) ----------
+SUMMARY = """Folio No. ISIN Scheme Name Cost Value (INR) Unit Balance NAV Date NAV (INR) Market Value (INR) Registrar
+90722941761/0INF846K01EW2 128TSDGG - Axis ELSS Tax Saver Fund -
+Direct Growth (Non Demat) 537,500.000 7,763.079 25-Aug-2026 112.6609 874,595.47 KFINTECH
+4274832/68 INF740K01PX1 D782 - DSP Mid Cap Fund - Direct Plan -
+Growth (formerly DSP Small and Mid Cap
+Fund) (Non-Demat) 363,000.000 4,280.894 25-Aug-2026 178.295 763,262.00 CAMS
+Total 900,500.00 1,637,857.47
+"""
+
+
+def test_summary_layout_is_detected_and_parsed():
+    rows, notes, layout = imp.parse_cas_any(SUMMARY)
+    assert layout == "summary" and len(rows) == 2
+    a = rows[0]
+    assert a["identifier"] == "90722941761/0"      # folio, ISIN split off
+    assert a["isin"] == "INF846K01EW2"
+    assert a["units"] == 7763.079
+    assert a["invested"] == 537500
+    assert a["last_price"] == 112.6609
+    assert a["current_value"] == 874595.47
+    assert a["registrar"] == "KFINTECH"
+    assert a["name"].startswith("Axis ELSS Tax Saver Fund")   # code prefix gone
+    assert "Non Demat" not in a["name"]
+
+
+def test_folio_glued_to_isin_is_still_read():
+    """The bug that silently dropped 3 of 12 rows: no word boundary."""
+    rows, _, _ = imp.parse_cas_any(SUMMARY)
+    glued = [r for r in rows if r["isin"] == "INF846K01EW2"]
+    assert len(glued) == 1 and glued[0]["identifier"] == "90722941761/0"
+
+
+def test_totals_mismatch_is_reported_not_swallowed():
+    broken = SUMMARY.replace("Total 900,500.00 1,637,857.47",
+                             "Total 1,500,000.00 2,900,000.00")
+    rows, notes, _ = imp.parse_cas_any(broken)
+    assert rows
+    assert any("not read" in n or "difference" in n for n in notes)
+
+
+def test_totals_that_agree_produce_no_warning():
+    rows, notes, _ = imp.parse_cas_any(SUMMARY)
+    assert not [n for n in notes if "difference" in n]
+
+
+def test_summary_skips_exited_schemes_with_no_units():
+    text = SUMMARY + ("55554444/3 INF200K01T51 LD346G - Closed Fund "
+                      "0.000 0.000 25-Aug-2026 0.000 0.00 CAMS\n")
+    rows, _, _ = imp.parse_cas_any(text)
+    assert all(r["units"] > 0 for r in rows)
+
+
+def test_amfi_dump_yields_an_isin_index():
+    import pricing
+    navs, by_isin = pricing.parse_amfi_dump(
+        "120503;INF846K01EW2;INF846K01FA4;Axis ELSS;112.6609;25-Aug-2026\n"
+        "122639;INF879O01027;N.A.;PPFAS Flexi;91.1854;25-Aug-2026\n"
+        "garbage\n")
+    assert navs["120503"]["nav"] == 112.6609
+    assert by_isin["INF846K01EW2"] == "120503"
+    assert by_isin["INF846K01FA4"] == "120503"     # both ISIN columns indexed
+    assert "N.A." not in by_isin

@@ -62,6 +62,7 @@ export default function ImportWizard({ meta, owners, reload, onDone }) {
   }
 
   const isPdf = (file?.name || '').toLowerCase().endsWith('.pdf')
+  const isCas = preview?.source === 'cas'
 
   return (
     <div className="card">
@@ -107,8 +108,10 @@ export default function ImportWizard({ meta, owners, reload, onDone }) {
 
       <p className="small muted">
         Works with Zerodha, Groww, Upstox, Angel One, ICICI Direct and most
-        others (CSV or XLSX), and with a CAMS/KFintech consolidated account
-        statement PDF for mutual funds.
+        others (CSV or XLSX). For mutual funds, upload a CAMS/KFintech
+        statement PDF — both the Consolidated Account Summary table and the
+        detailed statement are understood, and scheme codes are looked up from
+        the ISIN so prices refresh by themselves afterwards.
       </p>
 
       {msg && <div className="notice">{msg}</div>}
@@ -142,7 +145,13 @@ export default function ImportWizard({ meta, owners, reload, onDone }) {
           ))}
 
           <div className="card" style={{ marginTop: 12 }}>
-            <h2>{preview.rows.length} holdings ready to import</h2>
+            <h2>{preview.rows.length} holdings ready to import
+              {isCas && preview.layout && (
+                <span className="small muted" style={{ fontWeight: 400 }}>
+                  {' '}— read as a {preview.layout} statement
+                </span>
+              )}
+            </h2>
             {preview.rows.length === 0 ? (
               <p className="muted">
                 Nothing readable yet — check the mapping above, especially the
@@ -153,6 +162,8 @@ export default function ImportWizard({ meta, owners, reload, onDone }) {
                 <table className="data">
                   <thead><tr>
                     <th>Name</th><th>Ticker / folio</th>
+                    {isCas && <th>ISIN</th>}
+                    {isCas && <th>AMFI code</th>}
                     <th className="num">Qty</th><th className="num">Avg cost</th>
                     <th className="num">Price</th><th className="num">Invested</th>
                     <th className="num">Value</th>
@@ -162,6 +173,15 @@ export default function ImportWizard({ meta, owners, reload, onDone }) {
                       <tr key={i}>
                         <td>{r.name}</td>
                         <td className="small muted">{r.identifier || '—'}</td>
+                        {isCas && <td className="small muted">{r.isin || '—'}</td>}
+                        {isCas && (
+                          <td className="small">
+                            {r.scheme_code || (
+                              <span style={{ color: 'var(--warning)' }}>
+                                not matched
+                              </span>)}
+                          </td>
+                        )}
                         <td className="num">{r.units}</td>
                         <td className="num">{inr(r.avg_cost)}</td>
                         <td className="num">{inr(r.last_price)}</td>
@@ -171,7 +191,7 @@ export default function ImportWizard({ meta, owners, reload, onDone }) {
                     ))}
                   </tbody>
                   <tfoot><tr>
-                    <td colSpan={5}><b>Total</b></td>
+                    <td colSpan={isCas ? 7 : 5}><b>Total</b></td>
                     <td className="num"><b>
                       {inr(preview.rows.reduce((a, r) => a + r.invested, 0))}
                     </b></td>

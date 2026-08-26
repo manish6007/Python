@@ -21,6 +21,8 @@ give an educational review (not personalized investment advice):
    given the allocation gaps (asset-class level only, no specific products)?
 4. Liabilities: does prepaying any loan beat investing, at the stated rates?
 5. Tax efficiency: 80C/80CCD headroom, LTCG awareness (educational only).
+5b. Insurance: is life and health cover adequate for the dependants and debt,
+   and is any of it investment-linked cover that would be cheaper as term?
 6. Emergency fund adequacy versus monthly committed outflows, and whether
    the `financial_independence` projection's assumptions are reasonable --
    returns, inflation, step-up, the expense multiple, and whether post-FI
@@ -47,7 +49,8 @@ def _mask(s, keep=4):
 
 def build_snapshot(holdings, loans, cashflow, drift, sugg, targets,
                    privacy_safe=True, as_of=None, recurring=None,
-                   warnings=None, income_basis="", fi=None):
+                   warnings=None, income_basis="", fi=None,
+                   insurance=None, policies=None):
     """Assemble the full export dict from pre-computed pieces.
 
     Everything a reviewer would otherwise have to assume is stated: how the
@@ -130,6 +133,17 @@ def build_snapshot(holdings, loans, cashflow, drift, sugg, targets,
         } for r in recurring],
         "unrealised": analytics.unrealised_positions(holdings, as_of)["totals"],
         "financial_independence": fi,
+        "insurance": (dict(insurance or {}, policies_detail=[{
+            "kind": p.get("kind"),
+            "name": ("%s policy" % p.get("kind")) if privacy_safe else p.get("name"),
+            "insurer": "(hidden)" if privacy_safe else p.get("insurer"),
+            "policy_number": (_mask(p.get("policy_number")) if privacy_safe
+                              else p.get("policy_number")),
+            "covered": p.get("covered"),
+            "sum_assured": p.get("sum_assured"),
+            "annual_premium": p.get("annual_premium"),
+            "has_nominee": bool((p.get("nominee") or "").strip()),
+        } for p in (policies or [])]) if insurance else None),
         "data_quality": {
             "income_basis": income_basis or "unspecified (ask before assuming "
                                             "net or gross)",

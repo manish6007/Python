@@ -307,6 +307,33 @@ export default function FI({ summary }) {
         </p>
       </div>
 
+      {/* Rule of 72 */}
+      <div className="card">
+        <h2>Rule of 72</h2>
+        <p className="small muted" style={{ marginTop: 0 }}>
+          Divide 72 by a return to get the years money takes to double. It is
+          the quickest sanity check on any projection — and on any product
+          promising to double your money.
+        </p>
+        <div className="row">
+          {[6, 8, 9, 12, 15].map((r) => (
+            <div className="card stat" key={r} style={{ minWidth: 120 }}>
+              <div className="label">At {r}%</div>
+              <div className="value" style={{ fontSize: 26 }}>
+                {(72 / r).toFixed(1)}y
+              </div>
+              <div className="sub">to double</div>
+            </div>
+          ))}
+        </div>
+        <p className="small muted">
+          At {as.inflation_pct}% inflation your <i>costs</i> double every{' '}
+          {(72 / as.inflation_pct).toFixed(0)} years — which is why the FI
+          target line above rises, and why a {as.inflation_pct}% return is
+          standing still.
+        </p>
+      </div>
+
       {/* Assumptions */}
       <div className="card">
         <h2>Assumptions</h2>

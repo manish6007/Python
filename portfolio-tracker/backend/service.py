@@ -2,7 +2,7 @@
 from datetime import date
 
 import analytics
-from db import (ExpenseEntry, Holding, IncomeEntry, Loan, Owner,
+from db import (ExpenseEntry, Holding, IncomeEntry, Loan, Owner, Policy,
                 RecurringOutflow, get_setting, get_targets)
 
 
@@ -68,12 +68,29 @@ def recurring_to_dict(r):
     }
 
 
+def policy_to_dict(p):
+    return {
+        "id": p.id, "owner_id": p.owner_id, "kind": p.kind,
+        "insurer": p.insurer, "name": p.name,
+        "policy_number": p.policy_number, "covered": p.covered,
+        "sum_assured": p.sum_assured, "premium": p.premium,
+        "frequency": p.frequency,
+        "frequency_label": analytics.FREQUENCY_LABELS.get(p.frequency,
+                                                          p.frequency),
+        "annual_premium": analytics.to_annual(p.premium, p.frequency),
+        "next_due": p.next_due.isoformat() if p.next_due else None,
+        "valid_till": p.valid_till.isoformat() if p.valid_till else None,
+        "nominee": p.nominee, "notes": p.notes,
+    }
+
+
 def load_all(session):
     holdings = [holding_to_dict(h) for h in session.query(Holding).all()]
     loans = [loan_to_dict(loan) for loan in session.query(Loan).all()]
     recurring = [recurring_to_dict(r)
                  for r in session.query(RecurringOutflow).all()]
-    return holdings, loans, recurring
+    policies = [policy_to_dict(p) for p in session.query(Policy).all()]
+    return holdings, loans, recurring, policies
 
 
 def _window_start(months):
@@ -136,13 +153,18 @@ def build_suggestion_context(session, holdings, loans, cashflow):
 
 
 def full_pipeline(session):
-    holdings, loans, recurring = load_all(session)
+    holdings, loans, recurring, policies = load_all(session)
     cashflow = cashflow_summary(session, recurring)
     ctx, drift, targets, agg = build_suggestion_context(
         session, holdings, loans, cashflow)
     sugg = analytics.suggestions(ctx)
-    warnings = analytics.reconcile(recurring, loans, holdings)
+    warnings = analytics.reconcile(recurring, loans, holdings,
+                                   policies=policies)
+    insurance = analytics.insurance_gap(
+        policies, cashflow["income_m"] * 12,
+        sum(loan["principal_outstanding"] for loan in loans))
     return {"holdings": holdings, "loans": loans, "recurring": recurring,
+            "policies": policies, "insurance": insurance,
             "warnings": warnings,
             "cashflow": cashflow, "drift": drift, "targets": targets,
             "suggestions": sugg, "agg": agg}

@@ -439,3 +439,58 @@ def test_zero_value_holdings_do_not_trigger_a_nominee_warning():
            "last_price": 100, "avg_cost": 0}]
     assert "missing_nominee" not in [w["code"] for w in
                                      analytics.reconcile([], [], hs)]
+
+
+# ---- insurance -----------------------------------------------------------
+def test_life_cover_is_sized_to_income_and_debt():
+    g = analytics.insurance_gap(
+        [{"kind": "term", "sum_assured": 10000000}],
+        annual_income=3000000, total_liabilities=3200000, income_multiple=12)
+    assert g["life_cover"] == 10000000
+    assert g["life_cover_needed"] == 3000000 * 12 + 3200000
+    assert g["life_gap"] == 39200000 - 10000000
+
+
+def test_no_gap_when_cover_exceeds_the_need():
+    g = analytics.insurance_gap([{"kind": "term", "sum_assured": 50000000}],
+                                annual_income=1000000, total_liabilities=0)
+    assert g["life_gap"] == 0
+
+
+def test_health_gap_uses_the_floor():
+    g = analytics.insurance_gap([{"kind": "health", "sum_assured": 300000}],
+                                annual_income=0, health_floor=1000000)
+    assert g["health_cover"] == 300000 and g["health_gap"] == 700000
+
+
+def test_motor_cover_does_not_count_as_life_or_health():
+    g = analytics.insurance_gap([{"kind": "motor", "sum_assured": 800000}],
+                                annual_income=1000000)
+    assert g["life_cover"] == 0 and g["health_cover"] == 0
+
+
+def test_annual_premium_respects_frequency():
+    g = analytics.insurance_gap(
+        [{"kind": "term", "premium": 6000, "frequency": "half_yearly"},
+         {"kind": "health", "premium": 24000, "frequency": "yearly"}],
+        annual_income=0)
+    assert g["annual_premium"] == 12000 + 24000
+
+
+def test_premiums_missing_from_cashflow_are_flagged():
+    pols = [{"name": "Term", "premium": 24000, "frequency": "yearly",
+             "nominee": "Spouse"}]
+    codes = [w["code"] for w in analytics.reconcile([], [], [], policies=pols)]
+    assert "premium_not_in_cashflow" in codes
+    rec = [{"kind": "premium", "amount_monthly": 2000}]
+    codes = [w["code"] for w in analytics.reconcile(rec, [], [], policies=pols)]
+    assert "premium_not_in_cashflow" not in codes
+
+
+def test_policy_without_a_nominee_is_flagged():
+    pols = [{"name": "Term", "premium": 0, "nominee": ""}]
+    assert "policy_without_nominee" in [
+        w["code"] for w in analytics.reconcile([], [], [], policies=pols)]
+    pols[0]["nominee"] = "Spouse"
+    assert "policy_without_nominee" not in [
+        w["code"] for w in analytics.reconcile([], [], [], policies=pols)]

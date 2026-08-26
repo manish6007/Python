@@ -174,7 +174,8 @@ def has_split(h):
     return len(holding_splits(h)) > 1
 
 
-def reconcile(recurring, loans, holdings=None, as_of=None):
+def reconcile(recurring, loans, holdings=None, as_of=None,
+              policies=None):
     """Inconsistencies a human reviewer would otherwise have to guess about.
 
     Returns dicts of {level, code, message}. These are reported, never
@@ -235,6 +236,28 @@ def reconcile(recurring, loans, holdings=None, as_of=None):
             "message": "%d holding(s) were last priced more than a week ago; "
                        "refresh prices before relying on the valuation."
                        % len(stale)})
+
+    policy_premium = sum(to_annual(p.get("premium") or 0, p.get("frequency"))
+                         for p in (policies or []))
+    outflow_premium = sum(r["amount_monthly"] * 12 for r in recurring
+                          if r.get("kind") == "premium")
+    if policy_premium > 0 and abs(policy_premium - outflow_premium) > max(
+            0.05 * policy_premium, 1000):
+        out.append({
+            "level": "warning", "code": "premium_not_in_cashflow",
+            "message": "Policies total %s/year in premiums but committed "
+                       "outflows carry %s/year. Whichever is missing, your "
+                       "surplus is wrong by the difference."
+                       % (_inr(policy_premium), _inr(outflow_premium))})
+
+    for p in (policies or []):
+        if not (p.get("nominee") or "").strip():
+            out.append({
+                "level": "warning", "code": "policy_without_nominee",
+                "message": "Policy '%s' has no nominee recorded — a claim "
+                           "without one is far harder for a family to settle."
+                           % p.get("name", "policy")})
+            break
 
     no_nominee = [h for h in holdings
                   if not (h.get("meta") or {}).get("nominee")
@@ -505,6 +528,48 @@ def upcoming_lumpy(recurring, as_of=None, horizon_months=3):
             guard += 1
     out.sort(key=lambda x: x["due_date"])
     return out
+
+
+# Cover conventions common in Indian financial planning. Educational
+# starting points, not entitlements -- the UI says so and every input is
+# editable.
+LIFE_COVER_INCOME_MULTIPLE = 12.0   # 10-15x annual income is the usual band
+HEALTH_COVER_FLOOR = 1000000.0      # a family floor most planners quote
+
+LIFE_KINDS = {"term", "life"}
+HEALTH_KINDS = {"health"}
+
+
+def insurance_gap(policies, annual_income, total_liabilities=0.0, *,
+                  income_multiple=LIFE_COVER_INCOME_MULTIPLE,
+                  health_floor=HEALTH_COVER_FLOOR):
+    """Cover you hold against cover commonly recommended.
+
+    Life cover is sized to replace income and clear debts, since a family
+    left with the loan but not the earner is the case insurance exists for.
+    Investment-linked policies are counted at their stated sum assured, which
+    flatters them: an endowment's cover is usually a fraction of a term
+    plan's for the same premium.
+    """
+    life = sum(p.get("sum_assured") or 0 for p in policies
+               if p.get("kind") in LIFE_KINDS)
+    health = sum(p.get("sum_assured") or 0 for p in policies
+                 if p.get("kind") in HEALTH_KINDS)
+    life_needed = annual_income * income_multiple + (total_liabilities or 0)
+    return {
+        "life_cover": round(life, 2),
+        "life_cover_needed": round(life_needed, 2),
+        "life_gap": round(max(life_needed - life, 0.0), 2),
+        "life_basis": "%.0fx annual income plus outstanding debt"
+                      % income_multiple,
+        "health_cover": round(health, 2),
+        "health_floor": round(health_floor, 2),
+        "health_gap": round(max(health_floor - health, 0.0), 2),
+        "policies": len(policies),
+        "annual_premium": round(sum(
+            to_annual(p.get("premium") or 0, p.get("frequency"))
+            for p in policies), 2),
+    }
 
 
 def suggestions(context):

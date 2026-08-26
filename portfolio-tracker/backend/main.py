@@ -20,7 +20,7 @@ import pricing
 import service
 from db import (ASSET_CLASS_LABELS, ASSET_CLASSES, ExpenseEntry, Goal,
                 Holding,
-                IncomeEntry, Loan, Owner, RecurringOutflow, Snapshot,
+                IncomeEntry, Loan, Owner, Policy, RecurringOutflow, Snapshot,
                 Transaction, get_session, get_setting, get_targets,
                 set_setting)
 
@@ -80,6 +80,8 @@ def summary():
         "lumpy_upcoming": analytics.upcoming_lumpy(data["recurring"]),
         "warnings": data["warnings"],
         "unrealised": analytics.unrealised_positions(data["holdings"]),
+        "policies": data["policies"],
+        "insurance": data["insurance"],
         "snapshots": [{"date": sn.date.isoformat(), "net_worth": sn.net_worth,
                        "total_assets": sn.total_assets,
                        "total_liabilities": sn.total_liabilities}
@@ -654,6 +656,98 @@ def put_settings(payload: dict = Body(...)):
     return {"ok": True}
 
 
+# ---------------- insurance ----------------
+POLICY_KINDS = ("term", "life", "health", "pa", "ci", "motor", "other")
+
+
+@app.get("/api/policies")
+def list_policies():
+    s = db()
+    out = [service.policy_to_dict(p) for p in s.query(Policy).all()]
+    s.close()
+    return out
+
+
+@app.post("/api/policies")
+def add_policy(payload: dict = Body(...)):
+    s = db()
+    kind = payload.get("kind") or "term"
+    if kind not in POLICY_KINDS:
+        raise HTTPException(400, "bad kind %r" % kind)
+    freq = payload.get("frequency") or "yearly"
+    if freq not in analytics.FREQUENCY_MONTHS:
+        raise HTTPException(400, "bad frequency %r" % freq)
+    p = Policy(owner_id=payload.get("owner_id") or s.query(Owner).first().id,
+               kind=kind, insurer=payload.get("insurer") or "",
+               name=payload["name"],
+               policy_number=payload.get("policy_number") or "",
+               covered=payload.get("covered") or "",
+               sum_assured=float(payload.get("sum_assured") or 0),
+               premium=float(payload.get("premium") or 0), frequency=freq,
+               next_due=parse_date(payload.get("next_due")),
+               valid_till=parse_date(payload.get("valid_till")),
+               nominee=payload.get("nominee") or "",
+               notes=payload.get("notes") or "")
+    s.add(p)
+    s.commit()
+    out = service.policy_to_dict(p)
+    s.close()
+    return out
+
+
+@app.put("/api/policies/{pid}")
+def update_policy(pid: int, payload: dict = Body(...)):
+    s = db()
+    p = s.get(Policy, pid)
+    if not p:
+        raise HTTPException(404, "not found")
+    for f in ("kind", "insurer", "name", "policy_number", "covered",
+              "nominee", "notes", "frequency"):
+        if payload.get(f) is not None:
+            setattr(p, f, payload[f])
+    for f in ("sum_assured", "premium"):
+        if payload.get(f) is not None:
+            setattr(p, f, float(payload[f]))
+    for f in ("next_due", "valid_till"):
+        if f in payload:
+            setattr(p, f, parse_date(payload[f]))
+    s.commit()
+    out = service.policy_to_dict(p)
+    s.close()
+    return out
+
+
+@app.delete("/api/policies/{pid}")
+def delete_policy(pid: int):
+    s = db()
+    p = s.get(Policy, pid)
+    if p:
+        s.delete(p)
+        s.commit()
+    s.close()
+    return {"ok": True}
+
+
+@app.get("/api/insurance")
+def insurance_view(income_multiple: float = None, health_floor: float = None):
+    """Cover held against cover commonly recommended, plus renewals due."""
+    s = db()
+    data = service.full_pipeline(s)
+    gap = analytics.insurance_gap(
+        data["policies"], data["cashflow"]["income_m"] * 12,
+        sum(loan["principal_outstanding"] for loan in data["loans"]),
+        income_multiple=(income_multiple
+                         or analytics.LIFE_COVER_INCOME_MULTIPLE),
+        health_floor=(health_floor or analytics.HEALTH_COVER_FLOOR))
+    renewals = analytics.upcoming_lumpy(
+        [{"name": p["name"], "amount": p["premium"],
+          "frequency": p["frequency"], "next_due": p["next_due"],
+          "counts_as_investment": False} for p in data["policies"]],
+        horizon_months=6)
+    s.close()
+    return {"policies": data["policies"], "gap": gap, "renewals": renewals}
+
+
 # ---------------- goals ----------------
 def goal_dict(g):
     return {"id": g.id, "name": g.name, "target_year": g.target_year,
@@ -832,7 +926,8 @@ def build_snapshot(privacy: bool):
         data["suggestions"], data["targets"], privacy_safe=privacy,
         recurring=data["recurring"], warnings=data["warnings"],
         income_basis=get_setting(s, "income_basis", ""),
-        fi=_fi_for_export(s, data))
+        fi=_fi_for_export(s, data), insurance=data["insurance"],
+        policies=data["policies"])
     s.close()
     return snap
 

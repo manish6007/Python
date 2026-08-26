@@ -152,6 +152,32 @@ class Loan(Base):
     notes = Column(Text, default="")
 
 
+class Policy(Base):
+    """An insurance policy.
+
+    Records cover, nominee and renewal date -- the things a family needs and
+    usually cannot find. The premium is stored for the renewal reminder and
+    for reconciliation against cashflow; it is NOT added to the cashflow here,
+    because the committed-outflow list already owns that number and counting
+    it twice would overstate spending.
+    """
+    __tablename__ = "policies"
+    id = Column(Integer, primary_key=True)
+    owner_id = Column(Integer, ForeignKey("owners.id"), nullable=False)
+    kind = Column(String, default="term")   # term/life/health/pa/ci/motor/other
+    insurer = Column(String, default="")
+    name = Column(String, nullable=False)
+    policy_number = Column(String, default="")
+    covered = Column(String, default="")    # who is insured
+    sum_assured = Column(Float, default=0.0)
+    premium = Column(Float, default=0.0)
+    frequency = Column(String, default="yearly")
+    next_due = Column(Date, nullable=True)
+    valid_till = Column(Date, nullable=True)
+    nominee = Column(String, default="")
+    notes = Column(Text, default="")
+
+
 class Goal(Base):
     """A planned future spend: education, a house, a car, a wedding.
 

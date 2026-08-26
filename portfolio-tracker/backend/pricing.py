@@ -37,29 +37,29 @@ def parse_amfi_dump(text):
     return navs, by_isin
 
 
-def fetch_amfi_navs(timeout=30):
-    """Download today's AMFI NAV dump.
+def fetch_amfi(timeout=30):
+    """Download today's dump once and return both views of it.
 
-    Returns {scheme_code: {"name": str, "nav": float, "date": date}}.
+    ({scheme_code: {"name", "nav", "date"}}, {ISIN: scheme_code}). The file
+    is several megabytes, so a caller that wants both -- a price refresh that
+    also has to resolve ISINs -- should not fetch it twice.
     """
     try:
         resp = requests.get(AMFI_NAV_URL, timeout=timeout)
         resp.raise_for_status()
     except requests.RequestException:
-        return {}
-    navs, _ = parse_amfi_dump(resp.text)
-    return navs
+        return {}, {}
+    return parse_amfi_dump(resp.text)
+
+
+def fetch_amfi_navs(timeout=30):
+    """{scheme_code: {"name": str, "nav": float, "date": date}}."""
+    return fetch_amfi(timeout)[0]
 
 
 def fetch_amfi_isin_index(timeout=30):
     """{ISIN: AMFI scheme code}, so CAS holdings can price themselves."""
-    try:
-        resp = requests.get(AMFI_NAV_URL, timeout=timeout)
-        resp.raise_for_status()
-    except requests.RequestException:
-        return {}
-    _, by_isin = parse_amfi_dump(resp.text)
-    return by_isin
+    return fetch_amfi(timeout)[1]
 
 
 def search_amfi(navs, query, limit=20):

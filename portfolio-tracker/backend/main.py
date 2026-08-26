@@ -484,16 +484,32 @@ def portfolio_xirr():
 @app.post("/api/prices/refresh")
 def refresh_prices():
     s = db()
-    navs = pricing.fetch_amfi_navs()
+    navs, by_isin = pricing.fetch_amfi()
     mf_updated = stock_updated = 0
-    failed = []
+    failed, mf_failed = [], []
     if navs:
         _amfi_cache["data"], _amfi_cache["at"] = navs, datetime.now()
         for h in s.query(Holding).filter(Holding.asset_class == "mutual_fund"):
-            info = navs.get(str(h.identifier).strip())
+            ident = str(h.identifier or "").strip()
+            info = navs.get(ident)
+            if not info:
+                # A fund imported from a CAS is identified by its folio, and
+                # by its ISIN if AMFI was unreachable that day. Resolve the
+                # scheme code now and keep it, so this fund prices itself
+                # from here on instead of failing every refresh.
+                meta = json.loads(h.meta or "{}")
+                code = by_isin.get((meta.get("isin") or "").upper())
+                if code and navs.get(code):
+                    info = navs[code]
+                    if ident and ident != code:
+                        meta["folio"] = ident
+                        h.meta = json.dumps(meta)
+                    h.identifier = code
             if info:
                 h.last_price, h.price_date = info["nav"], info["date"]
                 mf_updated += 1
+            else:
+                mf_failed.append(h.name)
     for h in s.query(Holding).filter(Holding.asset_class == "stock"):
         px, pd_ = pricing.fetch_stock_price(h.identifier or h.name)
         if px:
@@ -504,7 +520,8 @@ def refresh_prices():
     s.commit()
     s.close()
     return {"amfi_reachable": bool(navs), "mf_updated": mf_updated,
-            "stocks_updated": stock_updated, "stock_failed": failed}
+            "mf_failed": mf_failed, "stocks_updated": stock_updated,
+            "stock_failed": failed}
 
 
 @app.get("/api/amfi/search")

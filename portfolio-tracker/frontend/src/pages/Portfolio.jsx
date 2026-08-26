@@ -66,8 +66,15 @@ export default function Portfolio({ summary, meta, owners, reload }) {
     try {
       const r = await api.post('/api/prices/refresh')
       let m = `MF NAVs updated: ${r.mf_updated} · stocks updated: ${r.stocks_updated}`
-      if (!r.amfi_reachable) m += ' · AMFI unreachable'
-      if (r.stock_failed.length) m += ' · failed: ' + r.stock_failed.join(', ')
+      if (!r.amfi_reachable) {
+        m += ' · AMFI could not be reached — check your internet connection,'
+          + ' then try again. Prices are left as they were.'
+      } else if (r.mf_failed?.length) {
+        m += ` · no NAV for ${r.mf_failed.join(', ')}. AMFI prices by scheme`
+          + ' code, so a fund identified only by its folio cannot be matched'
+          + ' — use Find AMFI scheme code below and put the code in Identifier.'
+      }
+      if (r.stock_failed.length) m += ' · no price for: ' + r.stock_failed.join(', ')
       setMsg(m)
       reload()
     } catch (err) { setMsg('Error: ' + err.message) }

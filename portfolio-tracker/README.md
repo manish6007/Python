@@ -167,7 +167,12 @@ because the app cannot know which side is right.
 | **Counts as** | Overrides the allocation bucket, e.g. a sweep FD filed under Cash |
 | **⊞ split** | Splits one holding across buckets — for multi-asset funds |
 
-**Refresh prices** pulls MF NAVs from AMFI and stock prices from Yahoo.
+**Refresh prices** pulls MF NAVs from AMFI and stock prices from Yahoo. AMFI
+prices by *scheme code*, so a fund still carrying only its folio number cannot
+be matched — the refresh names those funds instead of reporting a silent zero,
+and resolves the code itself from the ISIN when a CAS import supplied one.
+It needs working internet; if AMFI cannot be reached, prices are left exactly
+as they were.
 **Unrealised gains & losses** shows the long/short split and how many holdings
 are underwater.
 
@@ -294,7 +299,7 @@ nominee is often a trustee for the legal heirs rather than the owner.
 cd backend && python -m pytest -q
 ```
 
-121 tests covering the analytics, importers, FI projection and family-record
+123 tests covering the analytics, importers, FI projection and family-record
 documents —
 valuation, XIRR, cashflow averaging, allocation drift and presets, liquidity,
 reconciliation, amortisation, the FI accumulation and drawdown model, goal

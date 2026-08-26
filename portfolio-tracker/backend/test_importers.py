@@ -322,3 +322,68 @@ def test_a_detailed_statement_is_not_read_as_a_summary():
 def test_summary_is_still_read_as_a_summary():
     _, _, layout = imp.parse_cas_any(SUMMARY)
     assert layout == "summary"
+
+
+# ---- price refresh -------------------------------------------------------
+def test_refresh_prices_resolves_a_cas_fund_by_its_isin(tmp_path, monkeypatch):
+    """A CAS names funds by ISIN and folio, never by AMFI code.
+
+    If AMFI was unreachable at import time the holding is left with its folio
+    in the identifier, and would then fail every refresh forever. The code is
+    resolved from the stored ISIN and kept.
+    """
+    import json
+
+    import db
+    monkeypatch.setattr(db, "DB_PATH", str(tmp_path / "t.db"))
+    monkeypatch.setattr(db, "_engine", None)
+    monkeypatch.setattr(db, "_SessionFactory", None)
+    import main
+    import pricing
+    from datetime import date as _date
+
+    s = db.get_session()
+    s.add(db.Owner(name="Me"))
+    s.commit()
+    s.add(db.Holding(owner_id=1, asset_class="mutual_fund", name="Axis ELSS",
+                     identifier="90722941761 / 0", units=10.0, avg_cost=50.0,
+                     meta=json.dumps({"isin": "INF846K01EW2"})))
+    s.commit()
+    s.close()
+
+    monkeypatch.setattr(pricing, "fetch_amfi", lambda *a, **k: (
+        {"120503": {"name": "Axis ELSS", "nav": 112.6609,
+                    "date": _date(2026, 8, 25)}},
+        {"INF846K01EW2": "120503"}))
+    out = main.refresh_prices()
+    assert out["mf_updated"] == 1 and out["mf_failed"] == []
+
+    s = db.get_session()
+    h = s.query(db.Holding).first()
+    assert h.identifier == "120503"                  # code took the slot
+    assert h.last_price == 112.6609
+    assert json.loads(h.meta)["folio"] == "90722941761 / 0"   # folio kept
+    s.close()
+
+
+def test_refresh_prices_names_the_funds_it_could_not_price(tmp_path,
+                                                           monkeypatch):
+    import db
+    monkeypatch.setattr(db, "DB_PATH", str(tmp_path / "t2.db"))
+    monkeypatch.setattr(db, "_engine", None)
+    monkeypatch.setattr(db, "_SessionFactory", None)
+    import main
+    import pricing
+    from datetime import date as _date
+
+    s = db.get_session()
+    s.add(db.Owner(name="Me"))
+    s.commit()
+    s.add(db.Holding(owner_id=1, asset_class="mutual_fund", name="Some Fund",
+                     identifier="12345", units=1.0, avg_cost=10.0))
+    s.commit()
+    s.close()
+    monkeypatch.setattr(pricing, "fetch_amfi", lambda *a, **k: (
+        {"999": {"name": "Other", "nav": 1.0, "date": _date(2026, 8, 25)}}, {}))
+    out = main.refresh_prices()
+    assert out["mf_updated"] == 0 and out["mf_failed"] == ["Some Fund"]

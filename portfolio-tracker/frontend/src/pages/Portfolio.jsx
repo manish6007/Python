@@ -23,6 +23,7 @@ export default function Portfolio({ summary, meta, owners, reload }) {
   const [amfiHits, setAmfiHits] = useState(null)
   const [editId, setEditId] = useState(null)
   const [editVal, setEditVal] = useState('')
+  const [editInvested, setEditInvested] = useState('')
   const [editMaturity, setEditMaturity] = useState('')
   const [splitId, setSplitId] = useState(null)
   const [splitVals, setSplitVals] = useState({})
@@ -139,20 +140,38 @@ export default function Portfolio({ summary, meta, owners, reload }) {
   const startEdit = (h) => {
     setEditId(h.id)
     setEditMaturity(h.meta?.maturity_date || '')
+    setEditInvested(String(Math.round(h.invested || 0)))
     setEditVal(String(
       BALANCE_CLASSES.includes(h.asset_class) ? h.manual_value
-        : h.asset_class === 'fd' ? h.avg_cost : h.last_price || 0))
+        : h.asset_class === 'fd' ? h.avg_cost
+          : Math.round(h.current_value || 0)))
   }
 
   const saveEdit = async (h) => {
     const v = +editVal || 0
+    // For anything held in units, the two figures worth editing are what it
+    // cost and what it is worth — the month after a SIP those are what your
+    // fund app shows you. The units are solved back from them.
     const payload = BALANCE_CLASSES.includes(h.asset_class)
       ? { manual_value: v }
-      : h.asset_class === 'fd' ? { avg_cost: v } : { last_price: v }
+      : h.asset_class === 'fd' ? { avg_cost: v }
+        : { invested: +editInvested || 0, current_value: v }
     if (h.asset_class === 'fd') payload.meta = { maturity_date: editMaturity }
     await api.put('/api/holdings/' + h.id, payload)
     setEditId(null)
     reload()
+  }
+
+  // What the units would become if this edit were saved — shown before it is,
+  // because it is the number the user is implicitly changing.
+  const previewUnits = (h) => {
+    const price = h.last_price || 0
+    const live = price > 0 && price < 10000
+      && Math.abs(price - (h.avg_cost || 0)) > 0.005
+    if (!live || !UNIT_CLASSES.includes(h.asset_class)) return null
+    const v = +editVal || 0
+    if (!v) return null
+    return v / price
   }
 
   const importCsv = async (e) => {
@@ -378,11 +397,21 @@ export default function Portfolio({ summary, meta, owners, reload }) {
                           ? 'mat. ' + h.meta.maturity_date : 'no maturity set'}</span>
                       )}
                     </td>
-                    <td className="num">{inr(h.invested)}</td>
+                    <td className="num">
+                      {editId === h.id && !BALANCE_CLASSES.includes(h.asset_class)
+                        && h.asset_class !== 'fd' ? (
+                          <input style={{ width: 110 }} type="number" step="any"
+                            title="What you have put in, in total"
+                            value={editInvested}
+                            onChange={(e) => setEditInvested(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && saveEdit(h)} />
+                        ) : inr(h.invested)}
+                    </td>
                     <td className="num">
                       {editId === h.id ? (
                         <span className="row">
                           <input autoFocus style={{ width: 110 }} type="number" step="any"
+                            title="What it is worth today"
                             value={editVal} onChange={(e) => setEditVal(e.target.value)}
                             onKeyDown={(e) => e.key === 'Enter' && saveEdit(h)} />
                           {h.asset_class === 'fd' && (
@@ -391,6 +420,11 @@ export default function Portfolio({ summary, meta, owners, reload }) {
                               onChange={(e) => setEditMaturity(e.target.value)} />
                           )}
                           <button className="btn" type="button" onClick={() => saveEdit(h)}>✓</button>
+                          {previewUnits(h) !== null && (
+                            <span className="small muted">
+                              units → {previewUnits(h).toFixed(3)}
+                            </span>
+                          )}
                         </span>
                       ) : inr(h.current_value)}
                     </td>
@@ -399,7 +433,9 @@ export default function Portfolio({ summary, meta, owners, reload }) {
                     </td>
                     <td className="small muted">{h.price_date || h.value_date || ''}</td>
                     <td>
-                      <button className="icon" title="Update value/price/balance" onClick={() => startEdit(h)}>✏️</button>
+                      <button className="icon"
+                        title="Update what it cost and what it is worth"
+                        onClick={() => startEdit(h)}>✏️</button>
                       <button className="icon" title="Delete" onClick={() => del(h)}>🗑</button>
                     </td>
                   </tr>

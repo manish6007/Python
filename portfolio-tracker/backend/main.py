@@ -304,6 +304,41 @@ def apply_holding_payload(h, payload):
         h.meta = json.dumps(merged)
 
 
+def _restate_from_money(h, money):
+    """Re-derive units and cost from what a holding cost and is worth.
+
+    The month after a SIP, what you can see is a larger invested figure and
+    a larger value; how many units the instalments bought at that day's NAV
+    is nobody's idea of a memorable number. Both figures are honoured
+    exactly, and the units follow.
+    """
+    invested = money.get("invested")
+    value = money.get("current_value")
+    if invested is None:
+        invested = (h.units or 0.0) * (h.avg_cost or 0.0)
+    if value is None:
+        value = (h.units or 0.0) * (h.last_price or 0.0)
+
+    # A price is only a real per-unit price when it is not the whole value
+    # wearing a price's clothes, and not the placeholder the app writes at
+    # creation (last_price = avg_cost). Deriving units from either of those
+    # invents a unit count out of the purchase price.
+    price = h.last_price or 0.0
+    usable = (price and price < analytics.PLACEHOLDER_UNIT_COST
+              and abs(price - (h.avg_cost or 0.0)) > 0.005)
+    if usable and value:
+        # A real per-unit price: the value says how many units there are.
+        h.units = value / price
+    elif h.units:
+        # No usable price, so the unit count cannot move. Both numbers are
+        # still honoured -- the price absorbs the change instead.
+        h.last_price = value / h.units
+        h.price_date = date.today()
+    if h.units:
+        h.avg_cost = invested / h.units
+    h.value_date = date.today()
+
+
 @app.get("/api/holdings")
 def list_holdings():
     s = db()
@@ -335,10 +370,14 @@ def add_holding(body: schemas.HoldingIn):
 def update_holding(hid: int, body: schemas.HoldingUpdate):
     s = db()
     payload = body.model_dump(exclude_unset=True)
+    money = {k: payload.pop(k) for k in ("invested", "current_value")
+             if k in payload}
     h = s.get(Holding, hid)
     if not h:
         raise HTTPException(404, "not found")
     apply_holding_payload(h, payload)
+    if money:
+        _restate_from_money(h, money)
     if "manual_value" in payload:
         h.value_date = date.today()
     if "last_price" in payload:

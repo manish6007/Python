@@ -80,7 +80,15 @@ class HoldingIn(Strict):
 
 
 class HoldingUpdate(Strict):
-    """Every field optional: only what was sent is applied."""
+    """Every field optional: only what was sent is applied.
+
+    invested and current_value are not columns -- they are units × cost and
+    units × price. Sending them is the natural way to keep a holding up to
+    date after a month of SIPs, so the endpoint solves back for the units
+    rather than making anyone work them out.
+    """
+    invested: Optional[float] = Field(default=None, ge=0)
+    current_value: Optional[float] = Field(default=None, ge=0)
     asset_class: Optional[str] = None
     name: Optional[str] = Field(default=None, min_length=1, max_length=200)
     owner_id: Optional[int] = None

@@ -197,6 +197,13 @@ because the app cannot know which side is right.
 | **Counts as** | Overrides the allocation bucket, e.g. a sweep FD filed under Cash |
 | **⊞ split** | Splits one holding across buckets — for multi-asset funds |
 
+**Keeping it current.** The ✏️ on any fund or share edits **what it cost** and
+**what it is worth** — the two figures your fund app shows you after a month
+of SIPs. The units are solved back from them, so a fresh instalment is one
+edit rather than an arithmetic exercise. Where there is no real per-unit
+price to divide by, the unit count stays put and the price absorbs the
+change; either way both numbers you typed come out true.
+
 **Refresh prices** pulls MF NAVs from AMFI and stock prices from Yahoo.
 
 - AMFI prices by *scheme code*, and nobody knows their scheme codes. A CAS
@@ -407,7 +414,7 @@ misspelled field is rejected instead of silently ignored, and
 CI runs both, plus a frontend build, on every push touching
 `portfolio-tracker/` — see `.github/workflows/portfolio-tracker.yml`.
 
-251 tests. The pure analytics and FI modules, the importers, profiles,
+255 tests. The pure analytics and FI modules, the importers, profiles,
 privacy — and `test_api.py`, which goes through HTTP rather than around it,
 because the host check, the CORS configuration, profile selection from the
 cookie and the session lifecycle only exist on the request path.

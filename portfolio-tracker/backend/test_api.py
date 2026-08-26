@@ -637,3 +637,85 @@ def test_units_given_explicitly_are_still_respected(client, monkeypatch):
     assert r["added"] == 1 and r["units_derived"] == 0
     h = client.get("/api/holdings").json()[0]
     assert h["units"] == 10.0 and h["avg_cost"] == 2400
+
+
+# ---- keeping a holding up to date after a month of SIPs -----------------
+def test_editing_invested_and_value_moves_the_units(client, monkeypatch):
+    """What you can see after a SIP is a bigger invested figure and a bigger
+    value; how many units the instalment bought is nobody's idea of a
+    memorable number."""
+    navs = _stub_amfi(monkeypatch, main)
+    code, nav = next((c, i["nav"]) for c, i in navs.items()
+                     if i["name"].startswith("DSP Midcap Fund - Direct"))
+    csv = TEMPLATE_HEAD + (
+        "Me,mutual_fund,DSP Midcap Fund,%s,363000,490050,,,0,,0,,equity,,,,\n"
+        % code)
+    client.post("/api/holdings/import",
+                files={"file": ("h.csv", csv, "text/csv")})
+    h = client.get("/api/holdings").json()[0]
+    units_before = h["units"]
+
+    # A month later: another ₹25,000 in, and the value has moved.
+    after = client.put("/api/holdings/%d" % h["id"], json={
+        "invested": 388000, "current_value": 530000}).json()
+
+    assert round(after["invested"]) == 388000
+    assert round(after["current_value"]) == 530000
+    assert round(after["units"], 4) == round(530000 / nav, 4)
+    assert after["units"] > units_before                 # the SIP bought some
+    assert abs(after["units"] * after["avg_cost"] - 388000) < 1
+
+
+def test_editing_only_the_invested_amount_keeps_the_value(client,
+                                                          monkeypatch):
+    navs = _stub_amfi(monkeypatch, main)
+    code, nav = next((c, i["nav"]) for c, i in navs.items()
+                     if i["name"].startswith("DSP Midcap Fund - Direct"))
+    csv = TEMPLATE_HEAD + (
+        "Me,mutual_fund,DSP Midcap Fund,%s,363000,490050,,,0,,0,,equity,,,,\n"
+        % code)
+    client.post("/api/holdings/import",
+                files={"file": ("h.csv", csv, "text/csv")})
+    h = client.get("/api/holdings").json()[0]
+
+    after = client.put("/api/holdings/%d" % h["id"],
+                       json={"invested": 388000}).json()
+    assert round(after["invested"]) == 388000
+    assert round(after["current_value"]) == 490050       # untouched
+    assert after["last_price"] == nav
+
+
+def test_a_holding_with_no_usable_price_absorbs_the_change_in_the_price(
+        client):
+    """Units cannot move without a real per-unit price -- and a price equal
+    to the cost is the placeholder written at creation, not a live one. Both
+    figures the user gave must still come out true."""
+    h = client.post("/api/holdings", json={
+        "asset_class": "gold_physical", "name": "Gold jewellery",
+        "units": 85, "avg_cost": 4800}).json()
+    after = client.put("/api/holdings/%d" % h["id"], json={
+        "invested": 408000, "current_value": 616250}).json()
+    assert after["units"] == 85                          # unchanged
+    assert round(after["current_value"]) == 616250
+    assert round(after["invested"]) == 408000
+    assert round(after["last_price"], 2) == round(616250 / 85, 2)
+
+
+def test_the_money_figures_stay_consistent_after_editing(client, monkeypatch):
+    navs = _stub_amfi(monkeypatch, main)
+    code = next(c for c, i in navs.items()
+                if i["name"].startswith("DSP Midcap Fund - Direct"))
+    csv = TEMPLATE_HEAD + (
+        "Me,mutual_fund,DSP Midcap Fund,%s,363000,490050,,,0,,0,,equity,,,,\n"
+        % code)
+    client.post("/api/holdings/import",
+                files={"file": ("h.csv", csv, "text/csv")})
+    h = client.get("/api/holdings").json()[0]
+    client.put("/api/holdings/%d" % h["id"],
+               json={"invested": 388000, "current_value": 530000})
+    client.post("/api/prices/refresh")
+
+    after = client.get("/api/holdings").json()[0]
+    assert abs(after["units"] * after["avg_cost"] - after["invested"]) < 1
+    assert abs(after["units"] * after["last_price"]
+               - after["current_value"]) < 1

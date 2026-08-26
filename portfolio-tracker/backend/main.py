@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 
 import analytics
 import export as export_mod
+import family_record as fr_mod
 import fi as fi_mod
 import pricing
 import service
@@ -613,7 +614,9 @@ def take_snapshot():
 # ---------------- settings ----------------
 SETTING_KEYS = ("emergency_fund_target", "savings_float", "tax_80c_used",
                 "tax_80ccd1b_used", "age", "income_basis",
-                "inflation_pct", "step_up_pct", "swr_multiple")
+                "inflation_pct", "step_up_pct", "swr_multiple",
+                "family_record_enabled", "household_name",
+                "record_stored_at", "record_password_held_by")
 
 
 @app.get("/api/targets/presets")
@@ -879,6 +882,88 @@ def fi_projection(years: int = 50, inflation_pct: float = None,
         "coast": {"years_to_fi": coast["years_to_fi"]},
         "notes": notes,
     }
+
+
+# ---------------- family record ----------------
+def _record_enabled(s):
+    return get_setting(s, "family_record_enabled", "") == "1"
+
+
+@app.get("/api/family-record/status")
+def family_record_status():
+    s = db()
+    data = service.full_pipeline(s)
+    missing = [h["name"] for h in data["holdings"]
+               if not (h.get("meta") or {}).get("nominee")]
+    no_id = [h["name"] for h in data["holdings"]
+             if not (h.get("identifier") or "").strip()]
+    out = {
+        "enabled": _record_enabled(s),
+        "encryption_available": True,
+        "encryption_error": "",
+        "min_password_length": fr_mod.MIN_PASSWORD_LENGTH,
+        "holdings": len(data["holdings"]),
+        "policies": len(data["policies"]),
+        "loans": len(data["loans"]),
+        "holdings_without_nominee": missing,
+        "holdings_without_identifier": no_id,
+        "stored_at": get_setting(s, "record_stored_at", ""),
+        "password_held_by": get_setting(s, "record_password_held_by", ""),
+    }
+    try:
+        import pypdf  # noqa: F401
+        from cryptography.hazmat.primitives.ciphers import algorithms  # noqa
+    except Exception as exc:
+        out["encryption_available"] = False
+        out["encryption_error"] = (
+            "AES-256 is unavailable (%s). Install pypdf and cryptography; "
+            "the sealed record will not be written with weaker encryption."
+            % type(exc).__name__)
+    s.close()
+    return out
+
+
+@app.post("/api/family-record/sealed")
+def family_record_sealed(payload: dict = Body(...)):
+    """The full record, AES-256 encrypted. The password is never stored."""
+    s = db()
+    if not _record_enabled(s):
+        s.close()
+        raise HTTPException(403, "family record is switched off in Settings")
+    data = service.full_pipeline(s)
+    household = get_setting(s, "household_name", "")
+    s.close()
+    try:
+        pdf = fr_mod.build_sealed_record(
+            data["holdings"], data["policies"], data["loans"],
+            [h.get("owner") for h in data["holdings"]], household=household)
+        enc = fr_mod.encrypt_pdf(pdf, payload.get("password") or "")
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    except fr_mod.EncryptionUnavailable as exc:
+        raise HTTPException(503, str(exc))
+    return Response(enc, media_type="application/pdf", headers={
+        "Content-Disposition": "attachment; filename=family_record_sealed_%s.pdf"
+                               % date.today().isoformat()})
+
+
+@app.get("/api/family-record/locator")
+def family_record_locator():
+    """The open one-pager: where the sealed record is, institutions only."""
+    s = db()
+    if not _record_enabled(s):
+        s.close()
+        raise HTTPException(403, "family record is switched off in Settings")
+    data = service.full_pipeline(s)
+    pdf = fr_mod.build_locator_sheet(
+        data["holdings"], data["policies"], data["loans"],
+        household=get_setting(s, "household_name", ""),
+        stored_at=get_setting(s, "record_stored_at", ""),
+        password_held_by=get_setting(s, "record_password_held_by", ""))
+    s.close()
+    return Response(pdf, media_type="application/pdf", headers={
+        "Content-Disposition": "attachment; filename=where_our_records_are_%s.pdf"
+                               % date.today().isoformat()})
 
 
 # ---------------- export ----------------

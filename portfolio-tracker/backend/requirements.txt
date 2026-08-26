@@ -5,3 +5,5 @@ requests>=2.31
 reportlab>=4.0
 yfinance>=0.2.40
 python-multipart>=0.0.9
+pypdf>=4.0          # AES-256 for the sealed family record
+cryptography>=42.0  # pypdf's AES backend

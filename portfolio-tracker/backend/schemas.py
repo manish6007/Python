@@ -296,6 +296,9 @@ class SetUnits(Strict):
 class CodeAssignment(Strict):
     holding_id: int
     scheme_code: str = Field(min_length=1, max_length=12)
+    # Offered for holdings whose recorded name is a placeholder rather than
+    # a fund. Never the default: a name is the user's own label.
+    adopt_name: bool = False
 
 
 class ApplyCodes(Strict):

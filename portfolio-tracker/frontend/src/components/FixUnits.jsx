@@ -59,7 +59,10 @@ export default function FixUnits({ reload }) {
         These are recorded as <b>1 unit costing the whole invested amount</b> —
         what you get when the value was known but the unit count was not. It
         looks right until a real NAV arrives, and then one unit × ₹215 is
-        ₹215, so the holding reads as a near-total loss.
+        ₹215, so the holding reads as a near-total loss. A share that
+        genuinely costs tens of thousands is not listed here — what marks a
+        placeholder is a cost per unit wildly out of line with the price, not
+        a large one.
       </p>
       <p className="small muted">
         Fill in <b>either</b> column: the units you hold (your CAS calls it

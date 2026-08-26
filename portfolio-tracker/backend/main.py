@@ -736,8 +736,8 @@ def refresh_prices():
                         meta["folio"] = ident
                         h.meta = json.dumps(meta)
                     h.identifier = code
-            if info and analytics.is_unit_placeholder(
-                    service.holding_to_dict(h)):
+            if info and analytics.price_would_break_value(
+                    service.holding_to_dict(h), info["nav"]):
                 # Pricing this would replace a value with a NAV and wipe out
                 # the holding. It is reported instead, and priced once the
                 # real unit count is in.
@@ -758,7 +758,10 @@ def refresh_prices():
     prices = pricing.fetch_stock_prices([h.identifier for h in priceable])
     for h in priceable:
         px, pd_ = prices.get(h.identifier.strip(), (None, None))
-        if px:
+        if px and analytics.price_would_break_value(
+                service.holding_to_dict(h), px):
+            mf_placeholders.append(h.name)
+        elif px:
             h.last_price, h.price_date = px, pd_
             stock_updated += 1
         else:
@@ -895,12 +898,29 @@ def suggest_scheme_codes(plan: str = matching.DEFAULT_PLAN,
     return {"amfi_status": status, "holdings": out}
 
 
+@app.get("/api/amfi/candidates")
+def amfi_candidates(q: str, plan: str = matching.DEFAULT_PLAN,
+                    option: str = matching.DEFAULT_OPTION):
+    """Search AMFI by name, ranked the same way the suggestions are.
+
+    For the funds whose recorded name is a placeholder -- "HDFC MF via
+    Zerodha Coin" -- nothing can match it, and the only person who knows
+    what it really is, is the one looking at the screen.
+    """
+    navs, _, status = _amfi_navs()
+    if status != pricing.AMFI_OK:
+        return {"amfi_status": status, "candidates": []}
+    return {"amfi_status": status,
+            "candidates": matching.rank(q, navs, want_plan=plan,
+                                        want_option=option, limit=8)}
+
+
 @app.post("/api/amfi/apply-codes")
 def apply_scheme_codes(body: schemas.ApplyCodes):
     """Set the chosen scheme code on each fund and price it straight away."""
     navs, _, status = _amfi_navs()
     s = db()
-    applied, errors, derived = 0, [], []
+    applied, errors, derived, renamed = 0, [], [], []
     for item in body.assignments:
         h = s.get(Holding, item.holding_id)
         if not h:
@@ -918,13 +938,27 @@ def apply_scheme_codes(body: schemas.ApplyCodes):
             meta["folio"] = ident
             h.meta = json.dumps(meta)
         h.identifier = item.scheme_code
+        if item.adopt_name:
+            # A recorded name like "HDFC MF via Zerodha Coin (scheme name
+            # TBC)" is a note to self, not a fund. Replacing it is offered,
+            # never done quietly.
+            h.name = info["name"][:200]
+            renamed.append(item.scheme_code)
         # A holding recorded as "1 unit costing the whole invested amount"
         # carries its market value in last_price. Overwriting that with a
         # NAV turns a five-lakh holding into two hundred rupees, so the
         # units are derived from the value instead -- arithmetic on numbers
         # the user gave us, not a guess.
-        if analytics.is_unit_placeholder(service.holding_to_dict(h)) \
-                and h.last_price and info["nav"]:
+        # Derive units only while the recorded price is still the holding's
+        # value. Once a NAV has already flattened it, that price is a NAV
+        # too, and dividing one NAV by another invents a unit count -- 559
+        # over 759 is not 0.736 units of anything. Those stay flagged for
+        # the user to supply the real figure.
+        if (h.last_price
+                and analytics.price_would_break_value(
+                    service.holding_to_dict(h), info["nav"])
+                and not analytics.is_unit_placeholder(
+                    service.holding_to_dict(h))):
             market_value = h.last_price
             invested = h.avg_cost or 0.0
             h.units = market_value / info["nav"]
@@ -934,7 +968,8 @@ def apply_scheme_codes(body: schemas.ApplyCodes):
         applied += 1
     s.commit()
     s.close()
-    return {"applied": applied, "errors": errors, "derived_units": derived}
+    return {"applied": applied, "errors": errors,
+            "derived_units": derived, "renamed": len(renamed)}
 
 
 def _amfi_navs():

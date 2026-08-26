@@ -6,6 +6,7 @@ only exists on the request path, so calling the endpoint functions directly
 proves none of it. These go through the app.
 """
 import pytest
+from datetime import date
 from fastapi.testclient import TestClient
 
 import config
@@ -444,10 +445,11 @@ def test_a_purchase_price_is_not_treated_as_a_recent_nav(client, monkeypatch):
 # while the "price" is the market value; the moment a real NAV lands on it,
 # one unit times 215 is 215 and a five-lakh holding reads as a total loss.
 def _placeholder(client, name="SBI Small Cap Fund", invested=294000,
-                 value=350000):
+                 price=215):
+    """The broken shape: one "unit" costing the lot, priced at a real NAV."""
     return client.post("/api/holdings", json={
         "asset_class": "mutual_fund", "name": name, "units": 1,
-        "avg_cost": invested, "last_price": value}).json()
+        "avg_cost": invested, "last_price": price}).json()
 
 
 def test_a_placeholder_holding_is_reported(client):
@@ -475,15 +477,50 @@ def test_setting_the_real_units_keeps_the_invested_amount(client):
     assert round(after["avg_cost"], 4) == round(294000 / 1367.44, 4)
 
 
-def test_placeholders_are_listed_with_the_units_their_value_implies(client):
-    _placeholder(client, invested=294000, value=350000)
+def test_placeholders_are_listed_with_what_is_known_about_them(client):
+    _placeholder(client, invested=294000, price=215)
     row = client.get("/api/holdings/unit-placeholders").json()["holdings"][0]
     assert row["invested"] == 294000
-    assert row["last_price"] == 350000
+    assert row["last_price"] == 215
+    assert row["priceable"] is True         # a real NAV, so a value works
+
+
+def test_a_single_share_that_really_costs_a_lot_is_left_alone(client):
+    """One share of Hitachi Energy India really is tens of thousands. What
+    marks a placeholder is the proportion, not the size: a cost per unit
+    wildly out of line with the price per unit."""
+    client.post("/api/holdings", json={
+        "asset_class": "stock", "name": "Hitachi Energy India",
+        "identifier": "POWERINDIA", "units": 1,
+        "avg_cost": 38627, "last_price": 33125})
+    assert client.get("/api/holdings/unit-placeholders").json()["holdings"] == []
+    codes = [w["code"] for w in client.get("/api/summary").json()["warnings"]]
+    assert "unit_placeholder" not in codes
+
+
+def test_a_real_single_share_still_gets_its_price_refreshed(client,
+                                                            monkeypatch):
+    import pricing
+    monkeypatch.setattr(pricing, "fetch_amfi",
+                        lambda *a, **k: ({}, {}, pricing.AMFI_OK))
+    monkeypatch.setattr(pricing, "fetch_stock_prices",
+                        lambda syms, **k: {s: (34000.0, date.today())
+                                           for s in syms})
+    client.post("/api/holdings", json={
+        "asset_class": "stock", "name": "Hitachi Energy India",
+        "identifier": "POWERINDIA", "units": 1,
+        "avg_cost": 38627, "last_price": 33125})
+    body = client.post("/api/prices/refresh").json()
+    assert body["stocks_updated"] == 1
+    assert body["mf_placeholders"] == []
+    assert client.get("/api/holdings").json()[0]["current_value"] == 34000.0
 
 
 def test_a_refresh_will_not_price_a_placeholder_away(client, monkeypatch):
-    """Repricing it would replace a value with a NAV and wipe the holding."""
+    """Repricing it would replace a value with a NAV and wipe the holding.
+
+    Caught on the way in, while the recorded value can still become units.
+    """
     navs = _stub_amfi(monkeypatch, main)
     code = next(c for c, i in navs.items()
                 if i["name"].startswith("DSP Midcap Fund - Direct"))
@@ -502,8 +539,9 @@ def test_a_refresh_will_not_price_a_placeholder_away(client, monkeypatch):
 def test_applying_a_code_derives_units_instead_of_destroying_the_value(
         client, monkeypatch):
     navs = _stub_amfi(monkeypatch, main)
-    h = _placeholder(client, name="DSP Midcap Fund", invested=363000,
-                     value=420000)
+    h = client.post("/api/holdings", json={
+        "asset_class": "mutual_fund", "name": "DSP Midcap Fund", "units": 1,
+        "avg_cost": 363000, "last_price": 420000}).json()
     row = client.get("/api/amfi/suggest-codes").json()["holdings"][0]
     code = row["candidates"][0]["code"]
     nav = navs[code]["nav"]
@@ -522,7 +560,7 @@ def test_applying_a_code_derives_units_instead_of_destroying_the_value(
 def test_units_can_be_given_as_the_value_they_are_worth(client):
     """Nobody reads unit counts off a screen; everybody can see a value."""
     h = _placeholder(client, name="SBI Small Cap Fund", invested=294000,
-                     value=215)            # already flattened by a NAV
+                     price=215)            # already flattened by a NAV
     r = client.post("/api/holdings/set-units", json={"units": [
         {"holding_id": h["id"], "current_value": 350000}]}).json()
     assert r["applied"] == 1
@@ -535,8 +573,9 @@ def test_units_can_be_given_as_the_value_they_are_worth(client):
 
 def test_a_value_cannot_become_units_while_the_price_is_still_a_total(client):
     """Dividing a value by itself gives 1 back, which is the bug, not a fix."""
-    h = _placeholder(client, name="Not yet priced", invested=294000,
-                     value=350000)         # "price" is the whole value
+    h = client.post("/api/holdings", json={
+        "asset_class": "mutual_fund", "name": "Not yet priced", "units": 1,
+        "avg_cost": 294000, "last_price": 350000}).json()
     r = client.post("/api/holdings/set-units", json={"units": [
         {"holding_id": h["id"], "current_value": 350000}]}).json()
     assert r["applied"] == 0
@@ -719,3 +758,60 @@ def test_the_money_figures_stay_consistent_after_editing(client, monkeypatch):
     assert abs(after["units"] * after["avg_cost"] - after["invested"]) < 1
     assert abs(after["units"] * after["last_price"]
                - after["current_value"]) < 1
+
+
+def test_a_holding_already_flattened_is_not_given_invented_units(client,
+                                                                 monkeypatch):
+    """Its recorded price is already a NAV; dividing one NAV by another is
+    not a unit count. It stays flagged for the real figure instead."""
+    navs = _stub_amfi(monkeypatch, main)
+    h = _placeholder(client, name="DSP Midcap Fund", invested=363000,
+                     price=559)            # already flattened by a NAV
+    row = client.get("/api/amfi/suggest-codes").json()["holdings"][0]
+    code = row["candidates"][0]["code"]
+
+    r = client.post("/api/amfi/apply-codes", json={"assignments": [
+        {"holding_id": h["id"], "scheme_code": code}]}).json()
+    assert r["applied"] == 1
+    assert r["derived_units"] == []        # nothing invented
+
+    after = client.get("/api/holdings").json()[0]
+    assert after["units"] == 1             # untouched
+    assert after["last_price"] == navs[code]["nav"]
+    # and it is still listed as needing a real unit count
+    assert client.get("/api/holdings/unit-placeholders").json()["holdings"]
+
+
+def test_a_placeholder_can_be_renamed_to_the_scheme_it_turns_out_to_be(
+        client, monkeypatch):
+    """"HDFC MF via Zerodha Coin (scheme name TBC)" is a note to self."""
+    navs = _stub_amfi(monkeypatch, main)
+    h = client.post("/api/holdings", json={
+        "asset_class": "mutual_fund", "units": 100, "avg_cost": 50,
+        "name": "HDFC MF via Zerodha Coin (scheme name TBC)"}).json()
+    code, info = next(iter(navs.items()))
+
+    r = client.post("/api/amfi/apply-codes", json={"assignments": [
+        {"holding_id": h["id"], "scheme_code": code,
+         "adopt_name": True}]}).json()
+    assert r["applied"] == 1 and r["renamed"] == 1
+    assert client.get("/api/holdings").json()[0]["name"] == info["name"]
+
+
+def test_a_name_is_only_replaced_when_asked(client, monkeypatch):
+    navs = _stub_amfi(monkeypatch, main)
+    h = client.post("/api/holdings", json={
+        "asset_class": "mutual_fund", "name": "My own label",
+        "units": 100, "avg_cost": 50}).json()
+    code = next(iter(navs))
+    client.post("/api/amfi/apply-codes", json={"assignments": [
+        {"holding_id": h["id"], "scheme_code": code}]})
+    assert client.get("/api/holdings").json()[0]["name"] == "My own label"
+
+
+def test_amfi_can_be_searched_for_a_fund_no_name_could_match(client,
+                                                             monkeypatch):
+    _stub_amfi(monkeypatch, main)
+    body = client.get("/api/amfi/candidates?q=DSP Midcap").json()
+    assert body["candidates"]
+    assert body["candidates"][0]["name"].startswith("DSP Midcap Fund - Direct")

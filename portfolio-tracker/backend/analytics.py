@@ -31,21 +31,46 @@ BALANCE_BASED = {"savings", "epf", "ppf", "other"}
 
 
 # A unit-priced holding entered as "one unit costing the whole invested
-# amount" -- which is what you get when the value is known but the unit count
-# is not. No Indian mutual fund or share has a unit price anywhere near this,
-# so a cost per unit above it, on exactly one unit, is a total wearing a
-# price's clothes. The moment a real NAV is attached, value collapses to the
-# NAV itself, so this has to be caught rather than quietly priced.
+# amount" -- what you get when the value is known but the unit count is not.
+#
+# One unit costing a lot is not enough to identify it: a single share of
+# Hitachi Energy India really does cost tens of thousands. What gives it away
+# is the *proportion* -- a cost per unit wildly out of line with the price
+# per unit. One share bought at ₹38,627 now quoted at ₹33,125 is a holding
+# down 14%; "one unit" bought at ₹2,94,000 now quoted at ₹215 is not a
+# 99.9% loss, it is a total wearing a price's clothes.
 PLACEHOLDER_UNIT_COST = 10000.0
+PLACEHOLDER_COST_RATIO = 20.0
+
+
+def _one_unit_costing_a_lot(h):
+    if h.get("asset_class") not in UNIT_PRICED:
+        return False
+    return (abs((h.get("units") or 0.0) - 1.0) < 1e-9
+            and (h.get("avg_cost") or 0.0) >= PLACEHOLDER_UNIT_COST)
 
 
 def is_unit_placeholder(h):
-    """True for a holding whose "1 unit" is really its whole value."""
-    if h.get("asset_class") not in UNIT_PRICED:
-        return False
-    units = h.get("units") or 0.0
-    return abs(units - 1.0) < 1e-9 and (h.get("avg_cost") or 0.0) \
-        >= PLACEHOLDER_UNIT_COST
+    """True for a holding whose "1 unit" is really its whole value.
+
+    Judged against the price already recorded, so this answers "is this
+    holding's value wrong right now" -- which is only true once a real
+    per-unit price has landed on it.
+    """
+    price = h.get("last_price") or 0.0
+    return (_one_unit_costing_a_lot(h) and price > 0
+            and (h.get("avg_cost") or 0.0) / price > PLACEHOLDER_COST_RATIO)
+
+
+def price_would_break_value(h, new_price):
+    """Would pricing this holding at new_price destroy its recorded value?
+
+    The other half of the question: before a NAV lands, a placeholder still
+    reads correctly, because one times the value is the value. This catches
+    it on the way in, while the value can still be turned into units.
+    """
+    return (_one_unit_costing_a_lot(h) and (new_price or 0) > 0
+            and (h.get("avg_cost") or 0.0) / new_price > PLACEHOLDER_COST_RATIO)
 
 
 # How long a last-known balance may be extrapolated before the number owes

@@ -9,7 +9,7 @@ const BUCKETS = ['equity', 'debt', 'gold', 'real_estate', 'cash', 'other']
 const emptyForm = {
   asset_class: 'mutual_fund', name: '', identifier: '', units: '', avg_cost: '',
   last_price: '', manual_value: '', rate: '', start_date: '', category: 'equity',
-  bucket: '', maturity_date: '', purchase_date: '', notes: '',
+  bucket: '', maturity_date: '', purchase_date: '', nominee: '', notes: '',
 }
 
 export default function Portfolio({ summary, meta, owners, reload }) {
@@ -49,6 +49,7 @@ export default function Portfolio({ summary, meta, owners, reload }) {
         ...(cls === 'fd' && form.maturity_date
           ? { maturity_date: form.maturity_date } : {}),
         ...(form.purchase_date ? { purchase_date: form.purchase_date } : {}),
+        ...(form.nominee ? { nominee: form.nominee } : {}),
       },
     }
     try {
@@ -115,12 +116,12 @@ export default function Portfolio({ summary, meta, owners, reload }) {
     fileRef.current.value = ''
   }
 
-  const template = 'owner,asset_class,name,identifier,units,avg_cost,manual_value,last_price,rate,start_date,category,bucket,maturity_date,purchase_date\n' +
-    'Me,mutual_fund,Parag Parikh Flexi Cap Dir-G,122639,512.33,55.1,0,81.2,0,,equity,,,2023-04-10\n' +
-    'Me,stock,Reliance Industries,RELIANCE,10,2400,0,2950,0,,,,,2024-11-02\n' +
-    'Wife,fd,HDFC sweep FD,XXXX1234,0,500000,0,0,7.1,2025-01-15,,cash,2026-01-15,\n' +
-    'Me,fd,SBI 5yr tax saver FD,XXXX9911,0,150000,0,0,7.0,2024-03-01,,,2029-03-01,\n' +
-    'Me,ppf,SBI PPF,,0,0,450000,0,7.1,,,,,\n'
+  const template = 'owner,asset_class,name,identifier,units,avg_cost,manual_value,last_price,rate,start_date,category,bucket,maturity_date,purchase_date,nominee\n' +
+    'Me,mutual_fund,Parag Parikh Flexi Cap Dir-G,122639,512.33,55.1,0,81.2,0,,equity,,,2023-04-10,\n' +
+    'Me,stock,Reliance Industries,RELIANCE,10,2400,0,2950,0,,,,,2024-11-02,\n' +
+    'Wife,fd,HDFC sweep FD,XXXX1234,0,500000,0,0,7.1,2025-01-15,,cash,2026-01-15,,\n' +
+    'Me,fd,SBI 5yr tax saver FD,XXXX9911,0,150000,0,0,7.0,2024-03-01,,,2029-03-01,,\n' +
+    'Me,ppf,SBI PPF,,0,0,450000,0,7.1,,,,,,\n'
 
   return (
     <div className="grid">
@@ -201,6 +202,10 @@ export default function Portfolio({ summary, meta, owners, reload }) {
                 title="Enables short vs long-term classification"
                 onChange={set('purchase_date')} />
             </label>
+            <label className="field">Nominee
+              <input value={form.nominee} placeholder="who inherits this"
+                onChange={set('nominee')} style={{ width: 150 }} />
+            </label>
             <label className="field">Counts as
               <select value={form.bucket} onChange={set('bucket')}>
                 <option value="">Auto (by asset class)</option>
@@ -219,6 +224,8 @@ export default function Portfolio({ summary, meta, owners, reload }) {
             automatically once their maturity date is within 12 months.
             <b> Bought on</b> is what lets the app tell short-term from
             long-term holdings — without it, no tax view is possible.
+            <b> Nominee</b> is recorded here so the app can flag holdings
+            your family could not claim; never store passwords in it.
           </p>
         </form>
       </div>
@@ -255,7 +262,7 @@ export default function Portfolio({ summary, meta, owners, reload }) {
           <div style={{ overflowX: 'auto' }}>
             <table className="data">
               <thead><tr>
-                <th>Owner</th><th>Class</th><th>Name</th><th>Counts as</th>
+                <th>Owner</th><th>Class</th><th>Name</th><th>Nominee</th><th>Counts as</th>
                 <th className="num">Invested</th><th className="num">Current</th>
                 <th className="num">P&L</th><th>Priced</th><th></th>
               </tr></thead>
@@ -265,6 +272,17 @@ export default function Portfolio({ summary, meta, owners, reload }) {
                     <td>{h.owner}</td>
                     <td>{meta.asset_class_labels[h.asset_class]}</td>
                     <td>{h.name}</td>
+                    <td>
+                      <input defaultValue={h.meta?.nominee || ''}
+                        placeholder="not set"
+                        style={{ width: 110, padding: '2px 6px', fontSize: 12 }}
+                        onBlur={async (ev) => {
+                          if ((h.meta?.nominee || '') === ev.target.value) return
+                          await api.put('/api/holdings/' + h.id,
+                            { meta: { nominee: ev.target.value } })
+                          reload()
+                        }} />
+                    </td>
                     <td>
                       <select value={h.meta?.bucket || ''}
                         style={{ padding: '2px 4px', fontSize: 12 }}
@@ -322,7 +340,7 @@ export default function Portfolio({ summary, meta, owners, reload }) {
                 ),
                 splitId === h.id && (
                   <tr key={h.id + '-split'}>
-                    <td colSpan={9} style={{ background: 'var(--page)' }}>
+                    <td colSpan={10} style={{ background: 'var(--page)' }}>
                       <div className="row" style={{ alignItems: 'end' }}>
                         <span className="small">
                           <b>Look-through split for {h.name}</b><br />
@@ -413,7 +431,7 @@ export default function Portfolio({ summary, meta, owners, reload }) {
         <p className="small muted">
           Columns: owner, asset_class, name, identifier, units, avg_cost,
           manual_value, last_price, rate, start_date, category, bucket,
-          maturity_date, purchase_date. Dates are YYYY-MM-DD; bucket
+          maturity_date, purchase_date, nominee. Dates are YYYY-MM-DD; bucket
           overrides the allocation bucket (blank = automatic).
         </p>
         <div className="row">

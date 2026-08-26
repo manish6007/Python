@@ -236,6 +236,18 @@ def reconcile(recurring, loans, holdings=None, as_of=None):
                        "refresh prices before relying on the valuation."
                        % len(stale)})
 
+    no_nominee = [h for h in holdings
+                  if not (h.get("meta") or {}).get("nominee")
+                  and holding_value(h, as_of) > 0]
+    if no_nominee:
+        out.append({
+            "level": "warning", "code": "missing_nominee",
+            "message": "%d holding(s) worth %s have no nominee recorded. A "
+                       "missing or stale nomination is the most common reason "
+                       "a family cannot reach money it is entitled to."
+                       % (len(no_nominee),
+                          _inr(sum(holding_value(h, as_of) for h in no_nominee)))})
+
     undated_fds = [h for h in holdings if h.get("asset_class") == "fd"
                    and not (h.get("meta") or {}).get("maturity_date")]
     if undated_fds:

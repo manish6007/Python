@@ -1,7 +1,7 @@
 import {
   Area, Bar, BarChart, CartesianGrid, Cell, ComposedChart, Legend, Line,
-  LineChart, Pie, PieChart, ReferenceLine, ResponsiveContainer, Tooltip,
-  XAxis, YAxis,
+  LineChart, Pie, PieChart, ReferenceArea, ReferenceLine, ResponsiveContainer,
+  Tooltip, XAxis, YAxis,
 } from 'recharts'
 import { SERIES, inr, inrShort } from '../api'
 
@@ -194,6 +194,16 @@ function FiTooltip({ active, payload, label, real }) {
       <div style={{ color: 'var(--text-secondary)' }}>
         FI target: {inr(row.target)}
       </div>
+      {row.living > 0 && (
+        <div style={{ color: 'var(--text-secondary)' }}>
+          Living withdrawal: {inr(row.living)}
+        </div>
+      )}
+      {row.goalSpend > 0 && (
+        <div style={{ color: 'var(--series-2)' }}>
+          {row.goalNames.join(', ')}: −{inr(row.goalSpend)}
+        </div>
+      )}
       <div style={{
         marginTop: 4,
         color: short >= 0 ? 'var(--good-text)' : 'var(--text-secondary)',
@@ -204,7 +214,7 @@ function FiTooltip({ active, payload, label, real }) {
   )
 }
 
-export function FiChart({ rows, crossover, real }) {
+export function FiChart({ rows, crossover, real, depleted }) {
   if (!rows || !rows.length) return <p className="muted">No projection yet.</p>
   return (
     <ResponsiveContainer width="100%" height={340}>
@@ -218,6 +228,10 @@ export function FiChart({ rows, crossover, real }) {
           tickLine={false} width={70} />
         <Tooltip content={<FiTooltip real={real} />} />
         <Legend wrapperStyle={{ fontSize: 12 }} />
+        {crossover != null && rows.length > crossover && (
+          <ReferenceArea x1={crossover} x2={rows[rows.length - 1].year}
+            fill="var(--muted)" fillOpacity={0.07} />
+        )}
         <Area type="monotone" dataKey="band" name="Range at 9–15% equity"
           stroke="none" fill="var(--series-1)" fillOpacity={0.16}
           activeDot={false} />
@@ -229,8 +243,15 @@ export function FiChart({ rows, crossover, real }) {
         {crossover != null && (
           <ReferenceLine x={crossover} stroke="var(--good)" strokeWidth={1.5}
             strokeDasharray="4 4"
-            label={{ value: `FI in ${crossover}y`, position: 'insideTopLeft',
-              fill: 'var(--good-text)', fontSize: 11, offset: 8 }} />
+            label={{ value: `FI in ${crossover}y · drawdown starts`,
+              position: 'insideTopLeft', fill: 'var(--good-text)',
+              fontSize: 11, offset: 8 }} />
+        )}
+        {depleted != null && (
+          <ReferenceLine x={depleted} stroke="var(--critical)" strokeWidth={1.5}
+            label={{ value: `runs out in year ${depleted}`,
+              position: 'insideTopRight', fill: 'var(--critical)',
+              fontSize: 11, offset: 8 }} />
         )}
       </ComposedChart>
     </ResponsiveContainer>

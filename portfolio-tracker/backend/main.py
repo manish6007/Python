@@ -18,7 +18,8 @@ import export as export_mod
 import fi as fi_mod
 import pricing
 import service
-from db import (ASSET_CLASS_LABELS, ASSET_CLASSES, ExpenseEntry, Holding,
+from db import (ASSET_CLASS_LABELS, ASSET_CLASSES, ExpenseEntry, Goal,
+                Holding,
                 IncomeEntry, Loan, Owner, RecurringOutflow, Snapshot,
                 Transaction, get_session, get_setting, get_targets,
                 set_setting)
@@ -246,6 +247,7 @@ async def import_holdings(file: UploadFile):
                         ("bucket", (r.get("bucket") or "").strip()),
                         ("maturity_date", (r.get("maturity_date") or "").strip()),
                         ("purchase_date", (r.get("purchase_date") or "").strip()),
+                        ("nominee", (r.get("nominee") or "").strip()),
                     ) if v}))
             if cls in analytics.UNIT_PRICED:
                 h.last_price = float(r.get("last_price") or 0) or h.avg_cost
@@ -652,9 +654,54 @@ def put_settings(payload: dict = Body(...)):
     return {"ok": True}
 
 
+# ---------------- goals ----------------
+def goal_dict(g):
+    return {"id": g.id, "name": g.name, "target_year": g.target_year,
+            "amount_today": g.amount_today, "inflation_pct": g.inflation_pct,
+            "notes": g.notes}
+
+
+@app.get("/api/goals")
+def list_goals():
+    s = db()
+    out = [goal_dict(g) for g in s.query(Goal).order_by(Goal.target_year).all()]
+    s.close()
+    return out
+
+
+@app.post("/api/goals")
+def add_goal(payload: dict = Body(...)):
+    s = db()
+    year = int(payload.get("target_year") or 0)
+    if year < 0 or year > 60:
+        raise HTTPException(400, "target_year must be between 0 and 60")
+    g = Goal(name=payload["name"], target_year=year,
+             amount_today=float(payload["amount_today"]),
+             inflation_pct=float(payload.get("inflation_pct")
+                                 if payload.get("inflation_pct") is not None
+                                 else fi_mod.DEFAULT_GOAL_INFLATION),
+             notes=payload.get("notes") or "")
+    s.add(g)
+    s.commit()
+    out = goal_dict(g)
+    s.close()
+    return out
+
+
+@app.delete("/api/goals/{gid}")
+def delete_goal(gid: int):
+    s = db()
+    g = s.get(Goal, gid)
+    if g:
+        s.delete(g)
+        s.commit()
+    s.close()
+    return {"ok": True}
+
+
 # ---------------- financial independence ----------------
 @app.get("/api/fi")
-def fi_projection(years: int = 40, inflation_pct: float = None,
+def fi_projection(years: int = 50, inflation_pct: float = None,
                   step_up_pct: float = None, swr_multiple: float = None):
     """FI projection under three equity assumptions, from live data."""
     s = db()
@@ -685,14 +732,26 @@ def fi_projection(years: int = 40, inflation_pct: float = None,
               step_up_pct=step_up, swr_multiple=multiple, years=years,
               payoff_year=payoff_year, freed_emi_annual=freed_emi)
 
-    scen = fi_mod.scenarios(agg["by_bucket"], annual_investment,
-                            annual_expense, **kw)
+    goals = [{"name": g.name, "year": g.target_year,
+              "amount_today": g.amount_today,
+              "inflation_pct": g.inflation_pct}
+             for g in s.query(Goal).order_by(Goal.target_year).all()]
+    scen = fi_mod.plan_scenarios(agg["by_bucket"], annual_investment,
+                                 annual_expense, goals=goals, **kw)
+    impact = fi_mod.goal_impact(agg["by_bucket"], annual_investment,
+                                annual_expense, goals, **kw) if goals else None
     coast = fi_mod.coast_fi(agg["by_bucket"], annual_expense,
                             target_allocation=targets, inflation_pct=inflation,
                             step_up_pct=step_up, swr_multiple=multiple,
                             years=years)
 
     notes = []
+    base = next((x for x in scen if x["equity_return_pct"] == 12.0), scen[0])
+    if base["years_to_fi"] is not None and not base["survives"]:
+        notes.append("At 12%% the corpus is exhausted in year %d -- reaching "
+                     "the number is not the same as it lasting. Raise the "
+                     "expenses multiple, spend less, or retire later."
+                     % base["depleted_year"])
     if annual_expense <= 0:
         notes.append("No expenses recorded, so the FI target is zero and the "
                      "projection is meaningless. Log a month of spending first.")
@@ -721,6 +780,8 @@ def fi_projection(years: int = 40, inflation_pct: float = None,
         "fi_number_today": round(annual_expense * multiple, 2),
         "corpus_today": round(agg["total"], 2),
         "scenarios": scen,
+        "goals": goals,
+        "goal_impact": impact,
         "coast": {"years_to_fi": coast["years_to_fi"]},
         "notes": notes,
     }

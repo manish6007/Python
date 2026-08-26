@@ -128,3 +128,93 @@ def test_empty_allocation_does_not_divide_by_zero():
     r = fi.project({}, 1000, 0, target_allocation={}, inflation_pct=0,
                    step_up_pct=0, years=1)
     assert r["rows"][1]["corpus"] == 1000
+
+
+# ---- decumulation --------------------------------------------------------
+def test_plan_switches_to_withdrawing_after_fi():
+    r = fi.plan({"equity": 20000000}, 0, 300000, returns={"equity": 10.0},
+                inflation_pct=6, swr_multiple=30, years=30)
+    assert r["years_to_fi"] == 0
+    phases = {row["phase"] for row in r["rows"][1:]}
+    assert phases == {"withdraw"}
+    assert r["rows"][5]["living_withdrawal"] > 0
+
+
+def test_withdrawals_rise_with_inflation():
+    r = fi.plan({"equity": 20000000}, 0, 300000, returns={"equity": 10.0},
+                inflation_pct=6, swr_multiple=30, years=20)
+    w5 = r["rows"][5]["living_withdrawal"]
+    w10 = r["rows"][10]["living_withdrawal"]
+    assert w10 > w5 * 1.25          # ~6%/yr compounding over five years
+
+
+def test_an_overspent_corpus_depletes_and_is_reported():
+    r = fi.plan({"equity": 3000000}, 0, 100000, returns={"equity": 4.0},
+                inflation_pct=10, swr_multiple=30, retire_year=0, years=40)
+    assert r["survives"] is False
+    assert r["depleted_year"] is not None
+    assert r["rows"][r["depleted_year"]]["corpus"] <= 1
+
+
+def test_a_sustainable_corpus_survives_the_horizon():
+    r = fi.plan({"equity": 30000000}, 0, 300000, returns={"equity": 10.0},
+                inflation_pct=6, swr_multiple=30, retire_year=0, years=35)
+    assert r["survives"] is True and r["ending_corpus"] > 0
+
+
+def test_corpus_is_rebalanced_to_the_post_fi_mix_at_retirement():
+    r = fi.plan({"equity": 20000000}, 0, 300000,
+                post_fi_allocation={"debt": 100}, returns={"debt": 0.0},
+                inflation_pct=0, swr_multiple=30, years=3)
+    # everything sits in debt at 0% after retiring, so it only falls by spend
+    assert r["rows"][1]["corpus"] == round(20000000 - 300000, 2)
+
+
+def test_withdrawal_never_takes_more_than_the_corpus_holds():
+    b = {"equity": 1000.0}
+    assert fi._withdraw(b, 5000) == 1000.0
+    assert round(sum(b.values()), 6) == 0.0
+    assert fi._withdraw({}, 100) == 0.0
+
+
+# ---- goals ---------------------------------------------------------------
+def test_a_goal_is_withdrawn_in_its_year_and_inflated():
+    goals = [{"name": "College", "year": 5, "amount_today": 1000000,
+              "inflation_pct": 8}]
+    r = fi.plan({"cash": 50000000}, 0, 0, goals=goals, returns={"cash": 0.0},
+                inflation_pct=0, swr_multiple=0, years=6)
+    row = r["rows"][5]
+    assert row["goals"] == ["College"]
+    assert round(row["goal_withdrawal"]) == round(1000000 * 1.08 ** 5)
+    assert r["rows"][4]["goal_withdrawal"] == 0
+
+
+def test_goals_use_their_own_inflation_not_the_household_rate():
+    g = [{"name": "School", "year": 10, "amount_today": 100000,
+          "inflation_pct": 10}]
+    r = fi.plan({"cash": 90000000}, 0, 0, goals=g, returns={"cash": 0.0},
+                inflation_pct=4, swr_multiple=0, years=11)
+    assert round(r["rows"][10]["goal_withdrawal"]) == round(100000 * 1.10 ** 10)
+
+
+def test_goals_delay_financial_independence():
+    kw = dict(returns={"equity": 11.0}, inflation_pct=6, swr_multiple=30,
+              years=45, target_allocation={"equity": 100})
+    imp = fi.goal_impact({"equity": 5000000}, 600000, 600000,
+                         [{"name": "House", "year": 5,
+                           "amount_today": 5000000, "inflation_pct": 6}], **kw)
+    assert imp["years_to_fi_without_goals"] is not None
+    assert imp["delay_years"] is not None and imp["delay_years"] > 0
+
+
+def test_goal_impact_reports_none_when_fi_is_unreachable():
+    imp = fi.goal_impact({"cash": 1000}, 0, 1000000, [],
+                         returns={"cash": 3.0}, inflation_pct=7, years=20)
+    assert imp["delay_years"] is None
+
+
+def test_plan_scenarios_cover_each_equity_rate():
+    out = fi.plan_scenarios({"equity": 5000000}, 600000, 600000,
+                            inflation_pct=6, years=40)
+    assert [s["equity_return_pct"] for s in out] == [9.0, 12.0, 15.0]
+    assert all("survives" in s for s in out)

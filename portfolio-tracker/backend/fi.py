@@ -133,3 +133,157 @@ def coast_fi(corpus_by_bucket, annual_expense, **kw):
     kw.pop("payoff_year", None)
     kw.pop("freed_emi_annual", None)
     return project(corpus_by_bucket, 0.0, annual_expense, **kw)
+
+
+# Where the corpus typically sits once you stop earning: you de-risk, so the
+# blended return falls. Overridable, because "typically" is not "always".
+DEFAULT_POST_FI_ALLOCATION = {"equity": 40.0, "debt": 50.0, "gold": 5.0,
+                              "cash": 5.0}
+
+# Education costs inflate faster than the basket. Kept separate so a goal can
+# carry its own rate rather than borrowing the household one.
+DEFAULT_GOAL_INFLATION = 8.0
+
+
+def _withdraw(buckets, amount):
+    """Take `amount` out pro-rata across buckets. Returns what was actually
+    taken -- less than asked for when the corpus runs dry."""
+    total = sum(buckets.values())
+    if total <= 0:
+        return 0.0
+    taken = min(amount, total)
+    for b in list(buckets):
+        buckets[b] -= taken * (buckets[b] / total)
+    return taken
+
+
+def plan(corpus_by_bucket, annual_investment, annual_expense, *,
+         goals=None, target_allocation=None, post_fi_allocation=None,
+         returns=None, inflation_pct=DEFAULT_INFLATION,
+         step_up_pct=DEFAULT_STEP_UP, swr_multiple=DEFAULT_SWR_MULTIPLE,
+         years=50, payoff_year=None, freed_emi_annual=0.0, retire_year=None):
+    """Accumulation *and* drawdown in one timeline.
+
+    Reaching the number is only half the question; the other half is whether
+    it survives thirty years of withdrawals that themselves inflate. At
+    retirement the corpus is re-allocated to the post-FI mix and the plan
+    switches from contributing to withdrawing.
+
+    Goals are withdrawals at a given year, taken in either phase -- which is
+    the point: a school fee in year eight is money that stops compounding,
+    and its real cost is the FI date it pushes back.
+    """
+    rates = dict(DEFAULT_RETURNS)
+    rates.update(returns or {})
+    buckets = {k: float(v) for k, v in (corpus_by_bucket or {}).items()}
+    alloc = _normalise(dict(target_allocation)
+                       if target_allocation else dict(buckets) or {"equity": 1})
+    post_alloc = _normalise(dict(post_fi_allocation or DEFAULT_POST_FI_ALLOCATION))
+
+    goals_by_year = {}
+    for g in goals or []:
+        y = int(g.get("year", 0))
+        infl = g.get("inflation_pct")
+        infl = DEFAULT_GOAL_INFLATION if infl is None else float(infl)
+        goals_by_year.setdefault(y, []).append({
+            "name": g.get("name", "goal"),
+            "amount_today": float(g.get("amount_today") or 0),
+            "inflation_pct": infl,
+        })
+
+    contribution = float(annual_investment)
+    retired_at, depleted_at, rows = retire_year, None, []
+
+    for t in range(0, int(years) + 1):
+        accumulating = retired_at is None or t <= retired_at
+        if t > 0:
+            for b in list(buckets):
+                buckets[b] *= 1 + rates.get(b, DEFAULT_RETURNS["other"]) / 100.0
+            if accumulating:
+                added = contribution
+                if payoff_year is not None and t > payoff_year:
+                    added += freed_emi_annual
+                for b, w in alloc.items():
+                    buckets[b] = buckets.get(b, 0.0) + added * w
+                contribution *= 1 + step_up_pct / 100.0
+
+        expense_t = annual_expense * (1 + inflation_pct / 100.0) ** t
+        target_t = expense_t * swr_multiple
+
+        # Goals are withdrawn in either phase.
+        goal_spend, goal_names = 0.0, []
+        for g in goals_by_year.get(t, []):
+            want = g["amount_today"] * (1 + g["inflation_pct"] / 100.0) ** t
+            got = _withdraw(buckets, want)
+            goal_spend += got
+            goal_names.append(g["name"])
+
+        living_spend = 0.0
+        if not accumulating and t > 0:
+            living_spend = _withdraw(buckets, expense_t)
+
+        corpus = sum(buckets.values())
+        if retired_at is None and corpus >= target_t:
+            retired_at = t
+            # De-risk at retirement: re-allocate to the post-FI mix.
+            buckets = {b: corpus * w for b, w in post_alloc.items()}
+            rates = dict(rates)
+        if depleted_at is None and retired_at is not None and t > retired_at \
+                and corpus <= 1:
+            depleted_at = t
+
+        deflator = (1 + inflation_pct / 100.0) ** t
+        rows.append({
+            "year": t,
+            "phase": "accumulate" if retired_at is None or t <= retired_at
+                     else "withdraw",
+            "corpus": round(corpus, 2),
+            "corpus_real": round(corpus / deflator, 2),
+            "fi_target": round(target_t, 2),
+            "fi_target_real": round(target_t / deflator, 2),
+            "annual_expense": round(expense_t, 2),
+            "living_withdrawal": round(living_spend, 2),
+            "goal_withdrawal": round(goal_spend, 2),
+            "goals": goal_names,
+        })
+
+    end = rows[-1]
+    return {
+        "rows": rows,
+        "years_to_fi": retired_at,
+        "depleted_year": depleted_at,
+        "survives": depleted_at is None,
+        "ending_corpus": end["corpus"],
+        "ending_corpus_real": end["corpus_real"],
+        "fi_number_today": round(annual_expense * swr_multiple, 2),
+    }
+
+
+def plan_scenarios(corpus_by_bucket, annual_investment, annual_expense, *,
+                   equity_rates=EQUITY_SCENARIOS, returns=None, **kw):
+    out = []
+    for eq in equity_rates:
+        r = dict(DEFAULT_RETURNS)
+        r.update(returns or {})
+        r["equity"] = float(eq)
+        res = plan(corpus_by_bucket, annual_investment, annual_expense,
+                   returns=r, **kw)
+        out.append({"equity_return_pct": float(eq), **res})
+    return out
+
+
+def goal_impact(corpus_by_bucket, annual_investment, annual_expense, goals,
+                **kw):
+    """What the goals cost in FI years -- the number nobody computes."""
+    without = plan(corpus_by_bucket, annual_investment, annual_expense,
+                   goals=None, **kw)
+    with_goals = plan(corpus_by_bucket, annual_investment, annual_expense,
+                      goals=goals, **kw)
+    a, b = without["years_to_fi"], with_goals["years_to_fi"]
+    return {
+        "years_to_fi_without_goals": a,
+        "years_to_fi_with_goals": b,
+        "delay_years": (b - a) if (a is not None and b is not None) else None,
+        "survives_without_goals": without["survives"],
+        "survives_with_goals": with_goals["survives"],
+    }

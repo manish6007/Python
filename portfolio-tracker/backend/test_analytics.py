@@ -422,3 +422,20 @@ def test_rebalance_suggestion_is_framed_in_months_of_surplus():
     detail = [s for s in out if "Rebalance" in s["title"]][0]["detail"]
     assert "11 months" in detail
     assert "lump sum" in detail
+
+
+def test_holdings_without_a_nominee_are_flagged():
+    hs = [{"asset_class": "stock", "name": "X", "units": 1, "last_price": 100,
+           "avg_cost": 100}]
+    assert "missing_nominee" in [w["code"] for w in
+                                 analytics.reconcile([], [], hs)]
+    hs[0]["meta"] = {"nominee": "Spouse"}
+    assert "missing_nominee" not in [w["code"] for w in
+                                     analytics.reconcile([], [], hs)]
+
+
+def test_zero_value_holdings_do_not_trigger_a_nominee_warning():
+    hs = [{"asset_class": "stock", "name": "Sold out", "units": 0,
+           "last_price": 100, "avg_cost": 0}]
+    assert "missing_nominee" not in [w["code"] for w in
+                                     analytics.reconcile([], [], hs)]

@@ -152,6 +152,21 @@ class Loan(Base):
     notes = Column(Text, default="")
 
 
+class Goal(Base):
+    """A planned future spend: education, a house, a car, a wedding.
+
+    Amounts are in today's money and inflate at the goal's own rate, because
+    education does not inflate like groceries.
+    """
+    __tablename__ = "goals"
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False)
+    target_year = Column(Integer, nullable=False)   # years from now
+    amount_today = Column(Float, nullable=False)
+    inflation_pct = Column(Float, default=8.0)
+    notes = Column(Text, default="")
+
+
 class Snapshot(Base):
     """Monthly freeze of net worth; powers the trend chart."""
     __tablename__ = "snapshots"

@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 
 import analytics
 import export as export_mod
+import fi as fi_mod
 import pricing
 import service
 from db import (ASSET_CLASS_LABELS, ASSET_CLASSES, ExpenseEntry, Holding,
@@ -607,7 +608,8 @@ def take_snapshot():
 
 # ---------------- settings ----------------
 SETTING_KEYS = ("emergency_fund_target", "savings_float", "tax_80c_used",
-                "tax_80ccd1b_used", "age", "income_basis")
+                "tax_80ccd1b_used", "age", "income_basis",
+                "inflation_pct", "step_up_pct", "swr_multiple")
 
 
 @app.get("/api/targets/presets")
@@ -650,7 +652,117 @@ def put_settings(payload: dict = Body(...)):
     return {"ok": True}
 
 
+# ---------------- financial independence ----------------
+@app.get("/api/fi")
+def fi_projection(years: int = 40, inflation_pct: float = None,
+                  step_up_pct: float = None, swr_multiple: float = None):
+    """FI projection under three equity assumptions, from live data."""
+    s = db()
+    data = service.full_pipeline(s)
+    agg = data["agg"]
+    cf = data["cashflow"]
+
+    inflation = (inflation_pct if inflation_pct is not None
+                 else service.float_setting(s, "inflation_pct",
+                                            fi_mod.DEFAULT_INFLATION))
+    step_up = (step_up_pct if step_up_pct is not None
+               else service.float_setting(s, "step_up_pct",
+                                          fi_mod.DEFAULT_STEP_UP))
+    multiple = (swr_multiple if swr_multiple is not None
+                else service.float_setting(s, "swr_multiple",
+                                           fi_mod.DEFAULT_SWR_MULTIPLE))
+
+    # What is actually invested every month, and what will be once the loan
+    # closes. Expenses here already exclude EMI, which is what post-FI
+    # spending looks like.
+    annual_investment = cf["committed_invest_m"] * 12
+    annual_expense = cf["expense_m"] * 12
+    payoff_year, freed_emi = fi_mod.loan_payoff_year(
+        data["loans"], analytics.amortization_schedule)
+
+    targets = data["targets"]
+    kw = dict(target_allocation=targets, inflation_pct=inflation,
+              step_up_pct=step_up, swr_multiple=multiple, years=years,
+              payoff_year=payoff_year, freed_emi_annual=freed_emi)
+
+    scen = fi_mod.scenarios(agg["by_bucket"], annual_investment,
+                            annual_expense, **kw)
+    coast = fi_mod.coast_fi(agg["by_bucket"], annual_expense,
+                            target_allocation=targets, inflation_pct=inflation,
+                            step_up_pct=step_up, swr_multiple=multiple,
+                            years=years)
+
+    notes = []
+    if annual_expense <= 0:
+        notes.append("No expenses recorded, so the FI target is zero and the "
+                     "projection is meaningless. Log a month of spending first.")
+    if annual_investment <= 0:
+        notes.append("No monthly investing recorded, so only existing corpus "
+                     "compounds.")
+    if payoff_year is None and data["loans"]:
+        notes.append("A loan's EMI does not cover its interest, so the payoff "
+                     "year could not be computed and no freed EMI is assumed.")
+    elif payoff_year:
+        notes.append("The loan closes in about %d years; from then on %s/year "
+                     "of freed EMI is assumed to be invested."
+                     % (payoff_year, analytics._inr(freed_emi)))
+    s.close()
+    return {
+        "assumptions": {
+            "inflation_pct": inflation, "step_up_pct": step_up,
+            "swr_multiple": multiple, "years": years,
+            "returns_pct": fi_mod.DEFAULT_RETURNS,
+            "annual_investment": round(annual_investment, 2),
+            "annual_expense": round(annual_expense, 2),
+            "new_money_allocation_pct": targets,
+            "loan_payoff_year": payoff_year,
+            "freed_emi_annual": round(freed_emi, 2),
+        },
+        "fi_number_today": round(annual_expense * multiple, 2),
+        "corpus_today": round(agg["total"], 2),
+        "scenarios": scen,
+        "coast": {"years_to_fi": coast["years_to_fi"]},
+        "notes": notes,
+    }
+
+
 # ---------------- export ----------------
+def _fi_for_export(s, data):
+    """Compact FI block for the export: assumptions plus the headline result."""
+    cf = data["cashflow"]
+    annual_expense = cf["expense_m"] * 12
+    annual_investment = cf["committed_invest_m"] * 12
+    multiple = service.float_setting(s, "swr_multiple",
+                                     fi_mod.DEFAULT_SWR_MULTIPLE)
+    inflation = service.float_setting(s, "inflation_pct",
+                                      fi_mod.DEFAULT_INFLATION)
+    step_up = service.float_setting(s, "step_up_pct", fi_mod.DEFAULT_STEP_UP)
+    payoff_year, freed = fi_mod.loan_payoff_year(
+        data["loans"], analytics.amortization_schedule)
+    scen = fi_mod.scenarios(
+        data["agg"]["by_bucket"], annual_investment, annual_expense,
+        target_allocation=data["targets"], inflation_pct=inflation,
+        step_up_pct=step_up, swr_multiple=multiple, years=40,
+        payoff_year=payoff_year, freed_emi_annual=freed)
+    return {
+        "fi_number_today": round(annual_expense * multiple, 2),
+        "corpus_today": round(data["agg"]["total"], 2),
+        "assumptions": {
+            "annual_expense_excludes_emi": True,
+            "expense_multiple": multiple,
+            "inflation_pct": inflation,
+            "sip_step_up_pct": step_up,
+            "returns_pct_by_bucket": fi_mod.DEFAULT_RETURNS,
+            "new_money_allocated_at": data["targets"],
+            "loan_payoff_year": payoff_year,
+        },
+        "years_to_fi_by_equity_return": {
+            str(s_["equity_return_pct"]): s_["years_to_fi"] for s_ in scen},
+        "caveat": "Straight-line compounding; ignores sequence-of-returns "
+                  "risk and any post-FI change in spending beyond inflation.",
+    }
+
+
 def build_snapshot(privacy: bool):
     s = db()
     data = service.full_pipeline(s)
@@ -658,7 +770,8 @@ def build_snapshot(privacy: bool):
         data["holdings"], data["loans"], data["cashflow"], data["drift"],
         data["suggestions"], data["targets"], privacy_safe=privacy,
         recurring=data["recurring"], warnings=data["warnings"],
-        income_basis=get_setting(s, "income_basis", ""))
+        income_basis=get_setting(s, "income_basis", ""),
+        fi=_fi_for_export(s, data))
     s.close()
     return snap
 

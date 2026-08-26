@@ -21,7 +21,10 @@ give an educational review (not personalized investment advice):
    given the allocation gaps (asset-class level only, no specific products)?
 4. Liabilities: does prepaying any loan beat investing, at the stated rates?
 5. Tax efficiency: 80C/80CCD headroom, LTCG awareness (educational only).
-6. Emergency fund adequacy versus monthly committed outflows.
+6. Emergency fund adequacy versus monthly committed outflows, and whether
+   the `financial_independence` projection's assumptions are reasonable --
+   returns, inflation, step-up, the expense multiple, and whether post-FI
+   spending is realistically modelled.
 7. Top 5 concrete action items, ordered by impact.
 
 Before advising, read `data_quality`: it states how many months each average
@@ -44,7 +47,7 @@ def _mask(s, keep=4):
 
 def build_snapshot(holdings, loans, cashflow, drift, sugg, targets,
                    privacy_safe=True, as_of=None, recurring=None,
-                   warnings=None, income_basis=""):
+                   warnings=None, income_basis="", fi=None):
     """Assemble the full export dict from pre-computed pieces.
 
     Everything a reviewer would otherwise have to assume is stated: how the
@@ -126,6 +129,7 @@ def build_snapshot(holdings, loans, cashflow, drift, sugg, targets,
             "next_due": r.get("next_due"),
         } for r in recurring],
         "unrealised": analytics.unrealised_positions(holdings, as_of)["totals"],
+        "financial_independence": fi,
         "data_quality": {
             "income_basis": income_basis or "unspecified (ask before assuming "
                                             "net or gross)",

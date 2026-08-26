@@ -1,6 +1,7 @@
 import {
-  Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart,
-  ResponsiveContainer, Tooltip, XAxis, YAxis,
+  Area, Bar, BarChart, CartesianGrid, Cell, ComposedChart, Legend, Line,
+  LineChart, Pie, PieChart, ReferenceLine, ResponsiveContainer, Tooltip,
+  XAxis, YAxis,
 } from 'recharts'
 import { SERIES, inr, inrShort } from '../api'
 
@@ -163,6 +164,75 @@ export function TrendChart({ snapshots }) {
         <Line type="monotone" dataKey="Assets" stroke="var(--series-3)" strokeWidth={2} dot={{ r: 3 }} />
         <Line type="monotone" dataKey="Liabilities" stroke="var(--series-2)" strokeWidth={2} dot={{ r: 3 }} />
       </LineChart>
+    </ResponsiveContainer>
+  )
+}
+
+
+// Corpus against a rising FI target. The band spans the pessimistic and
+// optimistic equity assumptions: a single line would imply a precision the
+// projection does not have.
+function FiTooltip({ active, payload, label, real }) {
+  if (!active || !payload || !payload.length) return null
+  const row = payload[0].payload
+  const short = row.corpus - row.target
+  return (
+    <div style={{
+      background: 'var(--surface-1)', border: '1px solid var(--border)',
+      borderRadius: 8, padding: '8px 10px', fontSize: 12,
+      color: 'var(--text-primary)',
+    }}>
+      <div style={{ fontWeight: 600, marginBottom: 4 }}>
+        Year {label} {real ? "(today's money)" : '(nominal)'}
+      </div>
+      <div style={{ color: 'var(--text-secondary)' }}>
+        Corpus (12%): {inr(row.corpus)}
+      </div>
+      <div style={{ color: 'var(--text-secondary)' }}>
+        Range 9–15%: {inr(row.band[0])} – {inr(row.band[1])}
+      </div>
+      <div style={{ color: 'var(--text-secondary)' }}>
+        FI target: {inr(row.target)}
+      </div>
+      <div style={{
+        marginTop: 4,
+        color: short >= 0 ? 'var(--good-text)' : 'var(--text-secondary)',
+      }}>
+        {short >= 0 ? `Ahead by ${inr(short)}` : `Short by ${inr(-short)}`}
+      </div>
+    </div>
+  )
+}
+
+export function FiChart({ rows, crossover, real }) {
+  if (!rows || !rows.length) return <p className="muted">No projection yet.</p>
+  return (
+    <ResponsiveContainer width="100%" height={340}>
+      <ComposedChart data={rows} margin={{ top: 8, right: 12, left: 8 }}>
+        <CartesianGrid stroke="var(--grid)" vertical={false} />
+        <XAxis dataKey="year" tick={axisTick} tickLine={false}
+          axisLine={{ stroke: 'var(--baseline)' }}
+          label={{ value: 'years from now', position: 'insideBottom',
+            offset: -2, fill: 'var(--muted)', fontSize: 11 }} />
+        <YAxis tick={axisTick} tickFormatter={inrShort} axisLine={false}
+          tickLine={false} width={70} />
+        <Tooltip content={<FiTooltip real={real} />} />
+        <Legend wrapperStyle={{ fontSize: 12 }} />
+        <Area type="monotone" dataKey="band" name="Range at 9–15% equity"
+          stroke="none" fill="var(--series-1)" fillOpacity={0.16}
+          activeDot={false} />
+        <Line type="monotone" dataKey="corpus" name="Corpus (12% equity)"
+          stroke="var(--series-1)" strokeWidth={2} dot={false} />
+        <Line type="monotone" dataKey="target" name="FI target (rises with inflation)"
+          stroke="var(--series-2)" strokeWidth={2} strokeDasharray="5 4"
+          dot={false} />
+        {crossover != null && (
+          <ReferenceLine x={crossover} stroke="var(--good)" strokeWidth={1.5}
+            strokeDasharray="4 4"
+            label={{ value: `FI in ${crossover}y`, position: 'insideTopLeft',
+              fill: 'var(--good-text)', fontSize: 11, offset: 8 }} />
+        )}
+      </ComposedChart>
     </ResponsiveContainer>
   )
 }

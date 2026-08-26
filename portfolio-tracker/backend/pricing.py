@@ -150,29 +150,58 @@ def parse_nav_date(token):
         return None
 
 
+MAX_TRAILING_NUMBERS = 3        # NAV, and at most repurchase + sale prices
+
+
+def _is_number(token):
+    try:
+        float(token)
+    except ValueError:
+        return False
+    return True
+
+
 def parse_amfi_dump(text):
     """Parse AMFI's NAVAll.txt.
 
-    Layout is semicolon-separated:
-      Scheme Code;ISIN Div Payout/Growth;ISIN Div Reinvestment;Scheme Name;NAV;Date
+    Semicolon-separated, and *not* a fixed six columns: the scheme name is
+    itself split into name, plan and option, so a real row reads
+
+      119551;INF209KA12Z1;INF209KA13Z9;Aditya Birla ... Fund;Direct Plan;\
+      IDCW-Re-investment;100.1;26-Aug-2026
+
+    Reading the NAV from column 4 got "Direct Plan" on every one of 14,000
+    rows -- the file downloaded perfectly and produced nothing. So the fields
+    that can be recognised by shape are found first and the rest is the name:
+    the date is last, the NAV is the first of the run of numbers before it
+    (AMFI orders NAV, then repurchase and sale price where those appear), and
+    everything between the ISINs and that run is the scheme's name. A layout
+    that grows another column cannot break this the way it just did.
 
     Both ISIN columns are kept so a CAS -- which identifies funds by ISIN and
     never by AMFI code -- can be resolved to the code that NAV refresh needs.
     """
     navs, by_isin = {}, {}
     for line in text.splitlines():
-        parts = line.split(";")
-        if len(parts) < 6 or not parts[0].strip().isdigit():
+        parts = [p.strip() for p in line.split(";")]
+        if len(parts) < 6 or not parts[0].isdigit():
             continue
-        code, isin1, isin2, name, nav, nav_date = [p.strip() for p in parts[:6]]
-        d = parse_nav_date(nav_date)
-        try:
-            nav_f = float(nav)
-        except ValueError:
+        if parse_nav_date(parts[-1]) is None:
             continue
-        if d is None:
+        # Walk back over the trailing numbers; the leftmost of them is the NAV.
+        first_number = len(parts) - 1
+        while (first_number > 4 and _is_number(parts[first_number - 1])
+               and len(parts) - first_number <= MAX_TRAILING_NUMBERS):
+            first_number -= 1
+        if first_number >= len(parts) - 1 or not _is_number(parts[first_number]):
+            continue                       # no NAV between the name and date
+        nav_f = float(parts[first_number])
+        name = " - ".join(p for p in parts[3:first_number] if p)
+        if not name:
             continue
-        navs[code] = {"name": name, "nav": nav_f, "date": d}
+        code, isin1, isin2 = parts[0], parts[1], parts[2]
+        navs[code] = {"name": name, "nav": nav_f,
+                      "date": parse_nav_date(parts[-1])}
         for isin in (isin1, isin2):
             if isin and isin.upper() not in ("N.A.", "NA", "-"):
                 by_isin[isin.upper()] = code
@@ -195,11 +224,11 @@ def diagnose_dump(text):
         head = " / ".join(ln.strip() for ln in lines[:3] if ln.strip())[:200]
         return ("nothing in the file looked like a NAV row (%d lines). It "
                 "starts: %s" % (len(lines), head or "(blank)"))
-    sample = candidates[0].split(";")
-    return ("%d rows looked right but none could be read. The first is "
-            "code=%s nav=%r date=%r -- one of those two values is not in the "
-            "format expected." % (len(candidates), sample[0].strip(),
-                                  sample[4].strip(), sample[5].strip()))
+    # The whole row, not the fields this parser guessed at: when the column
+    # layout is what changed, naming the columns describes the bug rather
+    # than the file.
+    return ("%d rows looked like NAV rows but none could be read. The first "
+            "one is: %s" % (len(candidates), candidates[0].strip()[:300]))
 
 
 # What happened on the last AMFI fetch: "ok", "unreachable" or "unreadable".

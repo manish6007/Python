@@ -318,3 +318,71 @@ def test_the_connection_test_does_not_download_the_whole_file(store,
     monkeypatch.setattr(pricing.requests, "get", fake_get)
     pricing.check_hosts(timeout=1)
     assert all(r == "bytes=0-4095" for r in seen["ranges"])
+
+
+# ---- the AMFI layout, as it actually is ---------------------------------
+# The scheme name is three semicolon-separated fields -- name, plan, option --
+# so the row has eight columns, not the six the parser assumed. Reading the
+# NAV from column 4 got "Direct Plan" on all 14,286 rows: the file downloaded
+# perfectly and yielded nothing. These lines are the shapes it has to survive.
+REAL_ROW = ("119551;INF209KA12Z1;INF209KA13Z9;Aditya Birla Sun Life Banking "
+            "& PSU Debt Fund;Direct Plan;IDCW-Re-investment;100.1;26-Aug-2026")
+LEGACY_ROW = ("120503;INF846K01EW2;INF846K01FA4;Axis ELSS - Direct - Growth;"
+              "112.6609;25-Aug-2026")
+
+
+def test_the_name_plan_and_option_columns_are_not_mistaken_for_the_nav(store):
+    navs, by_isin = pricing.parse_amfi_dump(REAL_ROW)
+    from datetime import date as _date
+    assert navs["119551"]["nav"] == 100.1
+    assert navs["119551"]["date"] == _date(2026, 8, 26)
+    assert navs["119551"]["name"] == ("Aditya Birla Sun Life Banking & PSU "
+                                      "Debt Fund - Direct Plan - "
+                                      "IDCW-Re-investment")
+    assert by_isin["INF209KA12Z1"] == "119551"
+    assert by_isin["INF209KA13Z9"] == "119551"
+
+
+def test_the_older_six_column_layout_still_parses(store):
+    navs, _ = pricing.parse_amfi_dump(LEGACY_ROW)
+    assert navs["120503"]["nav"] == 112.6609
+
+
+def test_repurchase_and_sale_prices_do_not_displace_the_nav(store):
+    """AMFI orders NAV, then repurchase, then sale."""
+    row = "119552;INF1;INF2;Fund;Regular Plan;Growth;100.1;99.5;100.5;26-Aug-2026"
+    navs, _ = pricing.parse_amfi_dump(row)
+    assert navs["119552"]["nav"] == 100.1
+
+
+def test_a_number_inside_a_scheme_name_is_not_read_as_the_nav(store):
+    row = ("118989;INF3;INF4;ICICI Prudential Nifty 50 Index Fund;"
+           "Direct Plan;Growth;245.67;26-Aug-2026")
+    navs, _ = pricing.parse_amfi_dump(row)
+    assert navs["118989"]["nav"] == 245.67
+    assert "Nifty 50" in navs["118989"]["name"]
+
+
+def test_headers_and_rows_with_no_nav_are_skipped_quietly(store):
+    text = "\n".join([
+        "Scheme Code;ISIN Div Payout/ISIN Growth;ISIN Div Reinvestment;"
+        "Scheme Name;Net Asset Value;Date",
+        "Open Ended Schemes(Debt Scheme - Banking and PSU Fund)",
+        "Aditya Birla Sun Life Mutual Fund",
+        "888888;INF9;INF9B;Broken Fund;Direct;Growth;;26-Aug-2026",
+        REAL_ROW,
+    ])
+    navs, _ = pricing.parse_amfi_dump(text)
+    assert list(navs) == ["119551"]
+
+
+def test_placeholder_isins_are_not_indexed(store):
+    navs, by_isin = pricing.parse_amfi_dump(
+        "999999;N.A.;N.A.;Closed Fund;Direct;Growth;10.5;26-Aug-2026")
+    assert navs and by_isin == {}
+
+
+def test_the_diagnosis_shows_the_whole_row_not_the_guessed_columns(store):
+    """Naming columns described the bug rather than the file, and cost a day."""
+    why = pricing.diagnose_dump("119551;A;B;Fund;Direct Plan;Growth;100.1;bad")
+    assert "119551;A;B;Fund;Direct Plan;Growth;100.1;bad" in why

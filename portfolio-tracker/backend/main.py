@@ -1853,6 +1853,31 @@ def reset_all(body: schemas.ConfirmIn):
 
 
 # Serve the built React app if present (production single-process mode).
+class AppFiles(StaticFiles):
+    """Serve the built app so an update is actually seen.
+
+    Without a Cache-Control header a browser applies heuristic caching: it
+    invents a freshness lifetime from how old the file is, so a months-old
+    index.html gets cached for weeks and the browser stops asking the server
+    for it at all. Rebuilding then changes nothing on screen -- the new page
+    is served to nobody, because nobody requests it.
+
+    index.html must therefore always be revalidated. Everything under
+    assets/ carries a content hash in its filename, so a changed file is a
+    changed URL and those can be cached forever.
+    """
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        kind = response.headers.get("content-type", "")
+        if kind.startswith("text/html"):
+            response.headers["Cache-Control"] = "no-cache, must-revalidate"
+        elif "assets/" in path:
+            response.headers["Cache-Control"] = ("public, max-age=31536000, "
+                                                 "immutable")
+        return response
+
+
 DIST = paths.frontend_dist()
 if os.path.isdir(DIST):
-    app.mount("/", StaticFiles(directory=DIST, html=True), name="frontend")
+    app.mount("/", AppFiles(directory=DIST, html=True), name="frontend")

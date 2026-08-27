@@ -54,6 +54,20 @@ def wait_until_serving(port, timeout=30.0):
     return False
 
 
+def built_at():
+    """When the interface on disk was built, in words.
+
+    Printed because "it rebuilt" and "you are looking at the rebuild" are
+    different claims, and only the second one matters.
+    """
+    index = os.path.join(paths.frontend_dist(), "index.html")
+    try:
+        when = time.localtime(os.path.getmtime(index))
+    except OSError:
+        return "not built"
+    return time.strftime("%d %b %Y, %H:%M", when)
+
+
 def announce(port, data_dir):
     """Say it, and flush it.
 
@@ -65,11 +79,13 @@ def announce(port, data_dir):
     print()
     print("  Open it at   http://%s:%d" % (HOST, port))
     print("  Your data is %s" % data_dir)
+    print("  Interface built %s" % built_at())
     print()
     print("  Nothing leaves this machine except mutual-fund and share prices.")
     print("  Back up the folder above and you have backed up everything.")
     print()
     print("  Close this window to stop the app.")
+    print("  If a page looks out of date, press Ctrl+Shift+R in the browser.")
     print(flush=True)
 
 

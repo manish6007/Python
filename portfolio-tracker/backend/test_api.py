@@ -1033,3 +1033,40 @@ def test_a_build_step_that_cannot_start_is_a_sentence_not_a_traceback(
     printed = capsys.readouterr().out
     assert "Could not run npm run build" in printed
     assert "Traceback" not in printed
+
+
+# ---- an update has to actually reach the browser ------------------------
+def test_the_page_is_never_cached_but_its_assets_always_are(client):
+    """Without a Cache-Control header a browser invents a freshness lifetime
+    from the file's age, so a months-old index.html is cached for weeks and
+    never requested again. Rebuilding then changes nothing on screen."""
+    page = client.get("/")
+    if page.status_code == 404:
+        pytest.skip("frontend not built in this checkout")
+    assert page.headers["cache-control"] == "no-cache, must-revalidate"
+
+    import re
+    asset = re.search(r'/assets/[^"\']+\.js', page.text)
+    assert asset, "the built page should reference a hashed asset"
+    served = client.get(asset.group(0))
+    assert served.status_code == 200
+    # Hashed filenames make a changed file a changed URL, so these are safe
+    # to keep forever — and keeping them is what makes reloads cheap.
+    assert "immutable" in served.headers["cache-control"]
+
+
+def test_the_launcher_reports_when_the_interface_was_built(tmp_path,
+                                                           monkeypatch):
+    """"It rebuilt" and "you are looking at the rebuild" are different
+    claims, and only the second one matters."""
+    import desktop
+    import paths
+
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    monkeypatch.setattr(paths, "frontend_dist", lambda: str(dist))
+    assert desktop.built_at() == "not built"
+
+    (dist / "index.html").write_text("<html></html>")
+    assert desktop.built_at() != "not built"
+    assert "20" in desktop.built_at()               # a real year

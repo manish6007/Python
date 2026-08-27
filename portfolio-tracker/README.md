@@ -54,6 +54,18 @@ The detailed statement also carries each folio's nominee and its full
 transaction history, which are imported too — giving those holdings a real
 XIRR instead of an estimate.
 
+### See the risk inside your equity
+Asset allocation says how much is in equity. It does not say whether that
+equity is Nifty-50 steady or small-cap volatile, and those are different
+portfolios with identical asset-class charts. **Equity by company size**
+breaks the equity *inside* every holding into large, mid, small and
+international — funds and direct shares in one chart. Funds are read from
+their own SEBI category (a Large Cap fund must hold 80% in the top 100; a
+Small Cap fund 65% beyond the top 250), a hybrid contributes only its equity
+sleeve, and hovering a bar lists exactly which holdings are in it and why.
+Shares carry no category in their name, so you tag those; anything untagged
+is reported as unclassified rather than guessed into a bucket.
+
 ### Understand your allocation
 Holdings roll up into buckets (equity, debt, gold, real estate, cash) which
 you compare against a target you choose. Multi-asset funds can be split
@@ -317,6 +329,10 @@ Assumptions worth knowing, all of them editable:
 - **Expenses** exclude EMI (which is tracked separately) and include the
   monthly equivalent of recurring costs. That is also what post-FI spending
   looks like, which is why the FI page uses the same figure.
+- **Company size** — a fund's split is its SEBI *mandate*, not its actual
+  portfolio on the day: the mandate fixes the floor and the rest is placed
+  the way the category is usually run. Every split states its reasoning in
+  the tooltip, and any of them can be overridden per holding.
 - **Allocation presets** — equity via the "100 minus age" rule clamped to
   20–80%, gold 10%, cash 5%, REITs 5%, debt the remainder. Conventions common
   among Indian fee-only planners, not advice.
@@ -414,7 +430,7 @@ misspelled field is rejected instead of silently ignored, and
 CI runs both, plus a frontend build, on every push touching
 `portfolio-tracker/` — see `.github/workflows/portfolio-tracker.yml`.
 
-261 tests. The pure analytics and FI modules, the importers, profiles,
+277 tests. The pure analytics and FI modules, the importers, profiles,
 privacy — and `test_api.py`, which goes through HTTP rather than around it,
 because the host check, the CORS configuration, profile selection from the
 cookie and the session lifecycle only exist on the request path.

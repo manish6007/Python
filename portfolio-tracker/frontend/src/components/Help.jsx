@@ -30,6 +30,7 @@ const SECTIONS = [
       ['What it shows',
         ['Net worth, assets, liabilities and monthly investible surplus.',
           'Allocation by asset class and by owner — hover any bar to see which holdings are inside that bucket.',
+          'Equity by company size splits the equity inside your holdings into large, mid, small and international — funds and direct shares together. Funds are read from their own SEBI category and a hybrid contributes only its equity sleeve; hover a bar to see which holdings are in it and why. A share names no category, so tag it in the Company size column on the Portfolio page — anything untagged is reported as unclassified, never guessed.',
           'Your allocation against target, prioritised suggestions, and the net-worth trend from monthly snapshots.']],
       ['Warnings',
         ['Inconsistencies appear here: an EMI with no loan behind it, holdings without a nominee, stale prices, a hybrid fund with no look-through split.',

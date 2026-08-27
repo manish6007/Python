@@ -144,6 +144,111 @@ export function AllocationChart({ drift, bucketLabels, holdings = [] }) {
   )
 }
 
+// Large -> mid -> small is an ordered scale of risk, so it wears an ordinal
+// blue ramp (validated light and dark: monotone lightness, adjacent gaps,
+// light end clears the surface). International is not on that scale at all
+// -- Indian caps do not apply to it -- so it takes a separate hue, checked
+// against the ramp for separation.
+const CAP_ORDER = ['large', 'mid', 'small', 'international']
+const CAP_LABELS = {
+  large: 'Large cap', mid: 'Mid cap', small: 'Small cap',
+  international: 'International',
+}
+
+function CapTooltip({ active, payload, rows }) {
+  if (!active || !payload?.length) return null
+  const bucket = payload[0].payload.bucket
+  const inside = (rows || [])
+    .filter((r) => (r.split || {})[bucket] > 0)
+    .map((r) => ({ name: r.name, why: r.why,
+      value: r.equity * r.split[bucket] }))
+    .sort((a, b) => b.value - a.value)
+  return (
+    <div style={{ ...tooltipStyle, padding: '8px 10px', maxWidth: 340 }}>
+      <b>{CAP_LABELS[bucket]}</b>
+      <div style={{ color: 'var(--text-secondary)', marginBottom: 4 }}>
+        {inr(payload[0].payload.value)}
+      </div>
+      {inside.slice(0, 6).map((r) => (
+        <div key={r.name} style={{ marginTop: 3 }}>
+          {r.name} — {inr(r.value)}
+          <div style={{ color: 'var(--muted)' }}>{r.why}</div>
+        </div>
+      ))}
+      {inside.length > 6 && (
+        <div style={{ color: 'var(--muted)', marginTop: 4 }}>
+          +{inside.length - 6} more
+        </div>
+      )}
+    </div>
+  )
+}
+
+export function CapMixChart({ capMix }) {
+  if (!capMix || !capMix.total_equity) {
+    return <p className="muted">No equity yet, so there is nothing to split.</p>
+  }
+  const data = CAP_ORDER
+    .map((bucket) => ({
+      bucket, name: CAP_LABELS[bucket],
+      value: capMix.totals[bucket] || 0, pct: capMix.pct[bucket] || 0,
+    }))
+    .filter((d) => d.value > 0)
+  if (!data.length) {
+    return (
+      <p className="muted">
+        None of your equity could be classified yet — tag your shares on the
+        Portfolio page.
+      </p>
+    )
+  }
+  return (
+    <>
+      <ResponsiveContainer width="100%" height={44 * data.length + 40}>
+        <BarChart data={data} layout="vertical"
+          margin={{ top: 4, right: 96, left: 8, bottom: 4 }}>
+          <CartesianGrid stroke="var(--grid)" horizontal={false} />
+          <XAxis type="number" tick={axisTick} tickFormatter={inrShort}
+            axisLine={false} tickLine={false} />
+          <YAxis type="category" dataKey="name" tick={axisTick} width={92}
+            axisLine={{ stroke: 'var(--baseline)' }} tickLine={false} />
+          <Tooltip content={<CapTooltip rows={capMix.holdings} />}
+            cursor={{ fill: 'var(--grid)', opacity: 0.4 }} />
+          <Bar dataKey="value" radius={[0, 4, 4, 0]} maxBarSize={26}
+            label={{ position: 'right', fontSize: 12,
+              fill: 'var(--text-secondary)',
+              formatter: (v) => inr(v) }}>
+            {data.map((d) => (
+              <Cell key={d.bucket} fill={`var(--cap-${d.bucket})`} />
+            ))}
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+      <div className="legend">
+        {data.map((d) => (
+          <span key={d.bucket}>
+            <i style={{ background: `var(--cap-${d.bucket})` }} />
+            {d.name} {d.pct}%
+          </span>
+        ))}
+      </div>
+      {capMix.unclassified > 0 && (
+        <p className="small" style={{ color: 'var(--serious)', marginBottom: 0 }}>
+          {inr(capMix.unclassified)} of equity ({capMix.unclassified_pct}%) is
+          not classified, so the percentages above are of the rest. Tag those
+          holdings on the Portfolio page — shares have no category in their
+          name, so nobody but you can say which they are.
+        </p>
+      )}
+      <p className="small muted" style={{ marginBottom: 0 }}>
+        Funds are read from their own SEBI category; hover a bar to see which
+        holdings are in it and why. A fund's split is its mandate, not its
+        actual portfolio on the day.
+      </p>
+    </>
+  )
+}
+
 export function TrendChart({ snapshots }) {
   if (!snapshots.length) {
     return <p className="muted">Take a snapshot each month to build the trend.</p>

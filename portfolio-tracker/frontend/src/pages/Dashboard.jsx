@@ -1,5 +1,5 @@
 import { api, BUCKET_LABELS, inr } from '../api'
-import { AllocationChart, DonutByClass, OwnerBar, TrendChart } from '../components/Charts'
+import { AllocationChart, CapMixChart, DonutByClass, OwnerBar, TrendChart } from '../components/Charts'
 import Warnings from '../components/Warnings'
 
 export default function Dashboard({ summary, meta, reload }) {
@@ -70,10 +70,21 @@ export default function Dashboard({ summary, meta, reload }) {
 
       <div className="grid cols-2">
         <div className="card">
+          <h2>Equity by company size</h2>
+          <p className="small muted" style={{ marginTop: -4 }}>
+            Where the {inr(s.cap_mix?.total_equity || 0)} of equity inside your
+            portfolio actually sits — funds and shares together.
+          </p>
+          <CapMixChart capMix={s.cap_mix} />
+        </div>
+        <div className="card">
           <h2>Allocation vs target</h2>
           <AllocationChart drift={s.drift} bucketLabels={BUCKET_LABELS}
             holdings={s.holdings} />
         </div>
+      </div>
+
+      <div className="grid">
         <div className="card">
           <h2>Suggestions</h2>
           {s.suggestions.map((g, i) => (

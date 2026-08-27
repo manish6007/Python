@@ -230,6 +230,7 @@ def summary():
         "lumpy_upcoming": analytics.upcoming_lumpy(data["recurring"]),
         "warnings": data["warnings"],
         "unrealised": analytics.unrealised_positions(data["holdings"]),
+        "cap_mix": data["cap_mix"],
         "policies": data["policies"],
         "insurance": data["insurance"],
         "snapshots": [{"date": sn.date.isoformat(), "net_worth": sn.net_worth,

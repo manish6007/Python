@@ -23,6 +23,15 @@
   --serious: #ec835a;
   --critical: #d03b3b;
   --accent: #2a78d6;
+  /* Large -> mid -> small is an ordered risk scale, so it wears an ordinal
+     one-hue ramp rather than unrelated categorical hues. Validated in both
+     modes: lightness monotone, adjacent gaps >= 0.06, light end clears the
+     surface. International sits off that scale and takes its own hue,
+     checked for separation against the ramp (CVD dE 19). */
+  --cap-large: #86b6ef;
+  --cap-mid: #2a78d6;
+  --cap-small: #104281;
+  --cap-international: #eb6834;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -45,6 +54,10 @@
     --series-8: #e66767;
     --good-text: #0ca30c;
     --accent: #3987e5;
+    --cap-large: #9ec5f4;
+    --cap-mid: #3987e5;
+    --cap-small: #184f95;
+    --cap-international: #d95926;
   }
 }
 

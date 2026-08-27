@@ -2,6 +2,7 @@
 from datetime import date
 
 import analytics
+import capmix
 from db import (ExpenseEntry, Holding, IncomeEntry, Loan, Owner, Policy,
                 RecurringOutflow, get_setting, get_targets)
 
@@ -169,7 +170,17 @@ def full_pipeline(session):
     insurance = analytics.insurance_gap(
         policies, cashflow["income_m"] * 12,
         sum(loan["principal_outstanding"] for loan in loans))
+    # Cap mix runs on the equity *inside* each holding, not the holding --
+    # a balanced advantage fund contributes only its equity sleeve, and a
+    # debt fund none of itself.
+
+    def equity_share(h):
+        return (analytics.holding_splits(h).get("equity", 0.0)
+                * analytics.holding_value(h))
+
+    caps = capmix.cap_mix(holdings, equity_share)
     return {"holdings": holdings, "loans": loans, "recurring": recurring,
+            "cap_mix": caps,
             "policies": policies, "insurance": insurance,
             "warnings": warnings,
             "cashflow": cashflow, "drift": drift, "targets": targets,

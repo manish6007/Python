@@ -55,6 +55,16 @@ export default function ExportPage() {
   }
   const p = privacy ? 1 : 0
 
+  // Why the sealed download cannot be pressed yet, in words.
+  const minLen = rec?.min_password_length || 10
+  const blocker = !pw ? 'Choose a password to seal the file with.'
+    : pw.length < minLen
+      ? `${minLen - pw.length} more character${
+        minLen - pw.length === 1 ? '' : 's'} needed — ${minLen} is the minimum.`
+      : !pw2 ? 'Type it a second time, so a typo cannot lock you out.'
+        : pw !== pw2 ? 'The two do not match.'
+          : ''
+
   const loadPreview = async () => {
     setPreview(JSON.stringify(await api.get('/api/export/json?privacy=' + p), null, 2))
   }
@@ -153,16 +163,31 @@ export default function ExportPage() {
                 </p>
                 <div className="row">
                   <label className="field">Password (min {rec.min_password_length})
+                    {/* autoComplete="new-password" matters twice over: a
+                        browser filling a saved site password in here leaves
+                        the box looking full while React has seen nothing —
+                        and worse, would encrypt the file with a password
+                        the user never chose. */}
                     <input type="password" value={pw} style={{ width: 200 }}
+                      name="sealed-record-password"
+                      autoComplete="new-password"
                       onChange={(e) => setPw(e.target.value)} /></label>
                   <label className="field">Repeat it
                     <input type="password" value={pw2} style={{ width: 200 }}
+                      name="sealed-record-password-repeat"
+                      autoComplete="new-password"
                       onChange={(e) => setPw2(e.target.value)} /></label>
                   <button className="btn" onClick={downloadSealed}
-                    disabled={pw.length < rec.min_password_length || !pw2}>
+                    disabled={!!blocker}>
                     ⬇ Download sealed PDF
                   </button>
                 </div>
+                {/* A greyed-out button that will not say why is the one
+                    thing this app is not supposed to do. */}
+                {blocker && <p className="small"
+                  style={{ color: 'var(--serious)', margin: '4px 0 0' }}>
+                  {blocker}
+                </p>}
                 <p className="small muted">
                   The password is never stored — not in the app, not in the
                   database. Lose it and you regenerate the file, which is the

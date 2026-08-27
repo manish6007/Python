@@ -8,7 +8,9 @@ because that is the first question anyone sensible asks.
 Closing the window stops the app. Nothing keeps running in the background.
 """
 import os
+import shutil
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -71,9 +73,49 @@ def announce(port, data_dir):
     print(flush=True)
 
 
+def npm():
+    """The npm executable, or "" when Node is not installed."""
+    return shutil.which("npm") or shutil.which("npm.cmd") or ""
+
+
+def build_frontend():
+    """Rebuild the interface when it is older than the code it comes from.
+
+    Doing this only when the folder is missing was the bug: after a pull the
+    folder is still there, so months-old HTML gets served against today's
+    API and whole pages are simply absent. It is checked every start now,
+    and a rebuild takes a few seconds.
+    """
+    if paths.is_frozen() or not paths.frontend_is_stale():
+        return True
+    frontend = os.path.join(paths.bundle_dir(), "frontend")
+    tool = npm()
+    if not tool:
+        print("  The interface needs rebuilding but Node is not installed.",
+              flush=True)
+        print("  Install Node 18+ and run this again, or download the "
+              "ready-made app.", flush=True)
+        return os.path.isdir(paths.frontend_dist())
+    if not os.path.isdir(os.path.join(frontend, "node_modules")):
+        print("  Installing the interface's dependencies (first run only)...",
+              flush=True)
+        if subprocess.call([tool, "install"], cwd=frontend) != 0:
+            return os.path.isdir(paths.frontend_dist())
+    print("  Building the interface (a few seconds)...", flush=True)
+    if subprocess.call([tool, "run", "build"], cwd=frontend) != 0:
+        print("  That build failed. The app will start with whatever was "
+              "built last, which may be out of date.", flush=True)
+    return os.path.isdir(paths.frontend_dist())
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     port = free_port(int(os.environ.get("PORTFOLIO_PORT") or DEFAULT_PORT))
+
+    if not build_frontend():
+        raise SystemExit(
+            "The interface could not be built and none was found at %s."
+            % paths.frontend_dist())
 
     import config
     os.makedirs(config.data_dir(), exist_ok=True)
@@ -96,9 +138,4 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    if not os.path.isdir(paths.frontend_dist()):
-        raise SystemExit(
-            "The built frontend is missing (%s).\n"
-            "From source, run:  cd frontend && npm install && npm run build"
-            % paths.frontend_dist())
     main()

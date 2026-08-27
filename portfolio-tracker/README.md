@@ -174,8 +174,10 @@ Prerequisites: Python 3.9+, Node 18+.
 start.bat           # Windows
 ```
 
-That builds the interface and sets up Python on the first run only, then
-starts the app the same way the downloaded version does.
+Python is set up on the first run only. The interface is rebuilt **whenever
+it is older than the code it comes from**, so after a `git pull` you just run
+it again — there is no build step to remember, and no way to end up looking
+at last month's pages against this month's API.
 
 To build the downloadable app yourself:
 
@@ -476,7 +478,7 @@ misspelled field is rejected instead of silently ignored, and
 CI runs both, plus a frontend build, on every push touching
 `portfolio-tracker/` — see `.github/workflows/portfolio-tracker.yml`.
 
-291 tests. The pure analytics and FI modules, the importers, profiles,
+294 tests. The pure analytics and FI modules, the importers, profiles,
 privacy — and `test_api.py`, which goes through HTTP rather than around it,
 because the host check, the CORS configuration, profile selection from the
 cookie and the session lifecycle only exist on the request path.

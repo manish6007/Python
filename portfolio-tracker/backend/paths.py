@@ -75,3 +75,45 @@ def default_data_dir():
 
 def frontend_dist():
     return os.path.join(bundle_dir(), "frontend", "dist")
+
+
+# Files that, if newer than the build, mean the build is out of date.
+_FRONTEND_SOURCES = ("src", "index.html", "package.json", "package-lock.json",
+                     "vite.config.js", "vite.config.mjs", "vite.config.ts")
+
+
+def _newest_mtime(path):
+    if os.path.isfile(path):
+        return os.path.getmtime(path)
+    newest = 0.0
+    for root, _dirs, files in os.walk(path):
+        for name in files:
+            try:
+                newest = max(newest, os.path.getmtime(os.path.join(root, name)))
+            except OSError:
+                continue
+    return newest
+
+
+def frontend_is_stale():
+    """True when the interface was built before the code it is built from.
+
+    A build only runs when someone remembers to run it, and after a `git
+    pull` nobody does -- so the app serves months-old HTML against today's
+    API and half the pages are simply missing. Checking is cheap; being
+    wrong about it is a confusing afternoon.
+
+    Only meaningful from source. A bundled app carries its own build.
+    """
+    if is_frozen():
+        return False
+    built = os.path.join(frontend_dist(), "index.html")
+    if not os.path.exists(built):
+        return True
+    built_at = os.path.getmtime(built)
+    frontend = os.path.join(bundle_dir(), "frontend")
+    for name in _FRONTEND_SOURCES:
+        source = os.path.join(frontend, name)
+        if os.path.exists(source) and _newest_mtime(source) > built_at:
+            return True
+    return False

@@ -932,3 +932,54 @@ def test_a_busy_port_does_not_stop_the_app(monkeypatch):
 def test_the_app_only_ever_serves_the_machine_it_is_on():
     import desktop
     assert desktop.HOST == "127.0.0.1"             # never 0.0.0.0
+
+
+# ---- the interface must not be older than the code -----------------------
+def test_a_build_older_than_its_sources_is_detected(tmp_path, monkeypatch):
+    """Rebuilding only when the folder is missing was the bug: after a pull
+    the folder is still there, so months-old HTML gets served against
+    today's API and whole pages are simply absent."""
+    import os
+    import paths
+
+    frontend = tmp_path / "frontend"
+    (frontend / "dist").mkdir(parents=True)
+    (frontend / "src").mkdir()
+    monkeypatch.setattr(paths, "is_frozen", lambda: False)
+    monkeypatch.setattr(paths, "bundle_dir", lambda: str(tmp_path))
+
+    assert paths.frontend_is_stale() is True       # no index.html at all
+
+    built = frontend / "dist" / "index.html"
+    built.write_text("<html></html>")
+    source = frontend / "src" / "App.jsx"
+    source.write_text("x")
+    os.utime(source, (1, 1))                       # source older than build
+    assert paths.frontend_is_stale() is False
+
+    os.utime(built, (1, 1))                        # build older than source
+    os.utime(source, None)
+    assert paths.frontend_is_stale() is True
+
+
+def test_package_json_counts_as_a_source(tmp_path, monkeypatch):
+    import os
+    import paths
+
+    frontend = tmp_path / "frontend"
+    (frontend / "dist").mkdir(parents=True)
+    built = frontend / "dist" / "index.html"
+    built.write_text("<html></html>")
+    os.utime(built, (1, 1))
+    (frontend / "package.json").write_text("{}")
+
+    monkeypatch.setattr(paths, "is_frozen", lambda: False)
+    monkeypatch.setattr(paths, "bundle_dir", lambda: str(tmp_path))
+    assert paths.frontend_is_stale() is True
+
+
+def test_a_bundled_app_carries_its_own_build(monkeypatch):
+    """It cannot rebuild and does not need to."""
+    import paths
+    monkeypatch.setattr(paths, "is_frozen", lambda: True)
+    assert paths.frontend_is_stale() is False

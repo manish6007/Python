@@ -74,8 +74,36 @@ def announce(port, data_dir):
 
 
 def npm():
-    """The npm executable, or "" when Node is not installed."""
-    return shutil.which("npm") or shutil.which("npm.cmd") or ""
+    """The npm Windows can actually run, or "" when Node is not installed.
+
+    A Node install puts two files on the PATH: `npm`, which is a Unix shell
+    script, and `npm.cmd`, which is the Windows one. Since Python 3.12
+    shutil.which() returns an extensionless match when one exists, so
+    which("npm") hands back the shell script and CreateProcess refuses it
+    with "%1 is not a valid Win32 application". The extension has to be
+    asked for by name.
+    """
+    names = ("npm.cmd", "npm.exe", "npm") if os.name == "nt" else ("npm",)
+    for name in names:
+        found = shutil.which(name)
+        if found:
+            return found
+    return ""
+
+
+def run(tool, args, cwd):
+    """Run a build step, turning a failure into a sentence.
+
+    A traceback is not a message. Whatever goes wrong here -- npm missing,
+    the wrong kind of npm, a build error -- the person reading it wants to
+    know what to do, not which line of subprocess.py raised.
+    """
+    try:
+        return subprocess.call([tool] + args, cwd=cwd) == 0
+    except OSError as exc:
+        print("  Could not run %s %s: %s" % (os.path.basename(tool),
+                                             " ".join(args), exc), flush=True)
+        return False
 
 
 def build_frontend():
@@ -86,26 +114,30 @@ def build_frontend():
     API and whole pages are simply absent. It is checked every start now,
     and a rebuild takes a few seconds.
     """
+    def usable():
+        return os.path.isfile(os.path.join(paths.frontend_dist(), "index.html"))
+
     if paths.is_frozen() or not paths.frontend_is_stale():
         return True
     frontend = os.path.join(paths.bundle_dir(), "frontend")
     tool = npm()
     if not tool:
-        print("  The interface needs rebuilding but Node is not installed.",
+        print("  The interface needs rebuilding but Node was not found.",
               flush=True)
         print("  Install Node 18+ and run this again, or download the "
               "ready-made app.", flush=True)
-        return os.path.isdir(paths.frontend_dist())
+        return usable()
     if not os.path.isdir(os.path.join(frontend, "node_modules")):
         print("  Installing the interface's dependencies (first run only)...",
               flush=True)
-        if subprocess.call([tool, "install"], cwd=frontend) != 0:
-            return os.path.isdir(paths.frontend_dist())
+        if not run(tool, ["install"], frontend):
+            return usable()
     print("  Building the interface (a few seconds)...", flush=True)
-    if subprocess.call([tool, "run", "build"], cwd=frontend) != 0:
-        print("  That build failed. The app will start with whatever was "
-              "built last, which may be out of date.", flush=True)
-    return os.path.isdir(paths.frontend_dist())
+    if not run(tool, ["run", "build"], frontend):
+        print("  The app will start with whatever was built last, which may "
+              "be out of date. Some pages may be missing until this "
+              "succeeds.", flush=True)
+    return usable()
 
 
 def main(argv=None):
@@ -114,8 +146,10 @@ def main(argv=None):
 
     if not build_frontend():
         raise SystemExit(
-            "The interface could not be built and none was found at %s."
-            % paths.frontend_dist())
+            "\n  The interface could not be built, and there is no earlier "
+            "build to fall back on.\n"
+            "  Install Node 18+ (nodejs.org) and run this again, or download "
+            "the ready-made app.\n")
 
     import config
     os.makedirs(config.data_dir(), exist_ok=True)

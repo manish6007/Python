@@ -983,3 +983,53 @@ def test_a_bundled_app_carries_its_own_build(monkeypatch):
     import paths
     monkeypatch.setattr(paths, "is_frozen", lambda: True)
     assert paths.frontend_is_stale() is False
+
+
+# ---- finding npm on Windows ---------------------------------------------
+def test_npm_prefers_the_one_windows_can_run(tmp_path, monkeypatch):
+    """A Node install puts two files on the PATH: `npm`, a Unix shell
+    script, and `npm.cmd`. Since Python 3.12 shutil.which() returns an
+    extensionless match when one exists, so which("npm") hands back the
+    shell script and CreateProcess refuses it:
+    "%1 is not a valid Win32 application"."""
+    import desktop
+
+    nodejs = tmp_path / "nodejs"
+    nodejs.mkdir()
+    (nodejs / "npm").write_text("#!/bin/sh\n")        # the shell script
+    (nodejs / "npm.cmd").write_text("@echo off\n")    # the Windows one
+
+    def fake_which(name):
+        candidate = nodejs / name
+        return str(candidate) if candidate.exists() else None
+
+    monkeypatch.setattr(desktop.shutil, "which", fake_which)
+
+    monkeypatch.setattr(desktop.os, "name", "nt")
+    assert desktop.npm().endswith("npm.cmd")
+
+    monkeypatch.setattr(desktop.os, "name", "posix")
+    assert desktop.npm().endswith("npm")
+    assert not desktop.npm().endswith(".cmd")
+
+
+def test_no_node_at_all_is_reported_not_crashed(monkeypatch):
+    import desktop
+    monkeypatch.setattr(desktop.shutil, "which", lambda name: None)
+    assert desktop.npm() == ""
+
+
+def test_a_build_step_that_cannot_start_is_a_sentence_not_a_traceback(
+        monkeypatch, capsys):
+    """WinError 193 arrived as a stack trace ending in subprocess.py. The
+    person reading it wants to know what to do."""
+    import desktop
+
+    def refuse(*a, **k):
+        raise OSError(8, "%1 is not a valid Win32 application")
+
+    monkeypatch.setattr(desktop.subprocess, "call", refuse)
+    assert desktop.run("npm", ["run", "build"], ".") is False
+    printed = capsys.readouterr().out
+    assert "Could not run npm run build" in printed
+    assert "Traceback" not in printed

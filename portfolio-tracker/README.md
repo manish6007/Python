@@ -140,12 +140,31 @@ which the app itself will show you.
 
 ### The easy way — download and run
 
-1. Download the file for your machine from the
-   [releases page](../../releases): `PortfolioTracker.exe` on Windows,
-   `PortfolioTracker` on macOS or Linux.
+1. Download the one file for your machine from the
+   [releases page](../../releases):
+
+   | Your machine | File |
+   |---|---|
+   | Windows | `PortfolioTracker-windows.exe` |
+   | macOS | `PortfolioTracker-macos` |
+   | Linux | `PortfolioTracker-linux` |
+
 2. Run it. A small window opens saying where your data is kept, and your
    browser opens at the app.
 3. Close that window when you are done. Nothing keeps running afterwards.
+
+Nothing to clone, nothing to install. **Publishing a release** is one push
+by whoever maintains this:
+
+```bash
+git tag portfolio-tracker-v1
+git push origin portfolio-tracker-v1
+```
+
+That builds all three, checks each one actually starts and serves, and
+attaches them to a release with direct download links. Until a tag is
+pushed there is nothing on the releases page and the only way in is
+[from source](#from-source).
 
 No Python, no Node, no installer, no admin rights. The first run creates your
 data folder:
@@ -166,6 +185,7 @@ that reading the source does not. On macOS: right-click → Open. On Windows:
 More info → Run anyway.
 
 ### From source
+<a id="from-source"></a>
 
 Prerequisites: Python 3.9+, Node 18+.
 

@@ -8,13 +8,14 @@ const UNIT_CLASSES = ['mutual_fund', 'stock', 'gold_etf', 'reit', 'sgb', 'nps', 
 const BALANCE_CLASSES = ['savings', 'epf', 'ppf', 'other']
 const MF_CATEGORIES = ['equity', 'debt', 'hybrid', 'elss', 'liquid', 'gold']
 const BUCKETS = ['equity', 'debt', 'gold', 'real_estate', 'cash', 'other']
-// A fund states its category in its own name; a share does not. AMFI's
-// half-yearly large/mid/small list is the authority and there is no honest
-// way to fetch it, so shares are tagged here and anything untagged is
-// reported as unclassified rather than guessed into a bucket.
+// A fund states its category in its own name; a share does not, and AMFI's
+// half-yearly large/mid/small list is the authority with no honest way to
+// fetch it. So the override is offered on *anything* carrying equity —
+// including a fund whose name did not classify, and anything forced into
+// equity by Counts as (ESOP, PMS, unlisted shares). Restricting it by asset
+// class left holdings unclassifiable with no way to say so.
 const CAPS = [['large', 'Large cap'], ['mid', 'Mid cap'],
   ['small', 'Small cap'], ['international', 'International']]
-const CAP_CLASSES = ['stock', 'reit', 'gold_etf', 'sgb', 'nps']
 
 const emptyForm = {
   asset_class: 'mutual_fund', name: '', identifier: '', units: '', avg_cost: '',
@@ -406,27 +407,27 @@ export default function Portfolio({ summary, meta, owners, reload }) {
                       )}
                     </td>
                     <td>
-                      {h.bucket === 'equity'
-                        && CAP_CLASSES.includes(h.asset_class) ? (
-                          <select value={h.meta?.cap || ''}
-                            style={{ padding: '2px 4px', fontSize: 12 }}
-                            title="Which size band this company is in — AMFI publishes the list every six months"
-                            onChange={async (ev) => {
-                              await api.put('/api/holdings/' + h.id,
-                                { meta: { cap: ev.target.value } })
-                              reload()
-                            }}>
-                            <option value="">not set</option>
-                            {CAPS.map(([v, label]) => (
-                              <option key={v} value={v}>{label}</option>
-                            ))}
-                          </select>
-                        ) : (
-                          <span className="small muted">
-                            {h.asset_class === 'mutual_fund'
-                              ? 'from its category' : '—'}
-                          </span>
-                        )}
+                      {h.has_equity ? (
+                        <select value={h.meta?.cap || ''}
+                          style={{ padding: '2px 4px', fontSize: 12,
+                            borderColor: h.cap_label ? undefined
+                              : 'var(--serious)' }}
+                          title={h.cap_source
+                            ? h.cap_source
+                            : 'Nothing could be read from the name — set it here, or this holding stays out of the company-size chart'}
+                          onChange={async (ev) => {
+                            await api.put('/api/holdings/' + h.id,
+                              { meta: { cap: ev.target.value } })
+                            reload()
+                          }}>
+                          <option value="">
+                            {h.cap_label ? h.cap_label + ' (auto)' : 'not set'}
+                          </option>
+                          {CAPS.map(([v, label]) => (
+                            <option key={v} value={v}>{label}</option>
+                          ))}
+                        </select>
+                      ) : <span className="small muted">—</span>}
                     </td>
                     <td className="num">
                       {editId === h.id && !BALANCE_CLASSES.includes(h.asset_class)

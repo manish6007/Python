@@ -815,3 +815,58 @@ def test_amfi_can_be_searched_for_a_fund_no_name_could_match(client,
     body = client.get("/api/amfi/candidates?q=DSP Midcap").json()
     assert body["candidates"]
     assert body["candidates"][0]["name"].startswith("DSP Midcap Fund - Direct")
+
+
+# ---- nothing may be unclassifiable ---------------------------------------
+def test_every_holding_carrying_equity_can_be_tagged(client):
+    """Restricting the override by asset class left holdings that count as
+    equity with no way to say what size they are — permanently unclassified
+    and permanently unfixable."""
+    forced = client.post("/api/holdings", json={
+        "asset_class": "other", "name": "Employer ESOP", "units": 100,
+        "avg_cost": 500, "meta": {"bucket": "equity"}}).json()
+    assert forced["has_equity"] is True
+    assert forced["cap_label"] == ""          # nothing could be read
+
+    client.put("/api/holdings/%d" % forced["id"], json={"meta": {"cap": "large"}})
+    after = client.get("/api/holdings").json()[0]
+    assert after["cap_label"] == "Large cap"
+    assert after["cap_source"] == "set by you"
+    assert client.get("/api/summary").json()["cap_mix"]["unclassified"] == 0
+
+
+def test_a_fund_whose_name_says_nothing_can_still_be_set(client):
+    h = client.post("/api/holdings", json={
+        "asset_class": "mutual_fund", "name": "My PMS account", "units": 10,
+        "avg_cost": 1000, "meta": {"category": "equity"}}).json()
+    assert h["has_equity"] is True and h["cap_label"] == ""
+    client.put("/api/holdings/%d" % h["id"], json={"meta": {"cap": "mid"}})
+    assert client.get("/api/holdings").json()[0]["cap_label"] == "Mid cap"
+
+
+def test_a_holding_with_no_equity_is_not_asked_about(client):
+    h = client.post("/api/holdings", json={
+        "asset_class": "fd", "name": "Bank FD", "avg_cost": 500000,
+        "rate": 7.0, "start_date": "2025-01-01"}).json()
+    assert h["has_equity"] is False
+
+
+def test_an_auto_classified_fund_reports_what_it_read_and_why(client):
+    h = client.post("/api/holdings", json={
+        "asset_class": "mutual_fund", "units": 100, "avg_cost": 50,
+        "name": "DSP Midcap Fund - Direct Plan - Growth",
+        "meta": {"category": "equity"}}).json()
+    assert h["cap_label"] == "80/10/10 mid/large/small" or "mid" in h["cap_label"]
+    assert "SEBI" in h["cap_source"]
+
+
+def test_the_chart_can_name_what_it_could_not_classify(client):
+    """"Something is unclassified" with no way to find out what sends the
+    reader hunting through the whole table."""
+    client.post("/api/holdings", json={
+        "asset_class": "stock", "name": "Tips Music", "units": 10,
+        "avg_cost": 5100, "meta": {}})
+    mix = client.get("/api/summary").json()["cap_mix"]
+    unnamed = [r for r in mix["holdings"] if r["why"] == "not classified"]
+    assert [r["name"] for r in unnamed] == ["Tips Music"]
+    assert unnamed[0]["equity"] == 51000

@@ -233,12 +233,21 @@ export function CapMixChart({ capMix }) {
         ))}
       </div>
       {capMix.unclassified > 0 && (
-        <p className="small" style={{ color: 'var(--serious)', marginBottom: 0 }}>
+        <div className="small" style={{ color: 'var(--serious)' }}>
           {inr(capMix.unclassified)} of equity ({capMix.unclassified_pct}%) is
-          not classified, so the percentages above are of the rest. Tag those
-          holdings on the Portfolio page — shares have no category in their
-          name, so nobody but you can say which they are.
-        </p>
+          not classified, so the percentages above are of the rest. Set{' '}
+          <b>Company size</b> on these, on the Portfolio page:
+          {/* Naming them is the point — "something is unclassified" with no
+              way to find out what sends the reader hunting through the
+              table. */}
+          <ul style={{ margin: '4px 0 0', paddingLeft: 20 }}>
+            {(capMix.holdings || [])
+              .filter((r) => r.why === 'not classified')
+              .map((r) => (
+                <li key={r.name}>{r.name} — {inr(r.equity)}</li>
+              ))}
+          </ul>
+        </div>
       )}
       <p className="small muted" style={{ marginBottom: 0 }}>
         Funds are read from their own SEBI category; hover a bar to see which

@@ -63,8 +63,11 @@ international — funds and direct shares in one chart. Funds are read from
 their own SEBI category (a Large Cap fund must hold 80% in the top 100; a
 Small Cap fund 65% beyond the top 250), a hybrid contributes only its equity
 sleeve, and hovering a bar lists exactly which holdings are in it and why.
-Shares carry no category in their name, so you tag those; anything untagged
-is reported as unclassified rather than guessed into a bucket.
+Shares carry no category in their name, so you tag those in the **Company
+size** column — which is offered on anything carrying equity, including a
+fund whose name says nothing and anything forced into equity by *Counts as*.
+Whatever stays untagged is listed by name under the chart rather than left
+as an unexplained total.
 
 ### Understand your allocation
 Holdings roll up into buckets (equity, debt, gold, real estate, cash) which
@@ -430,7 +433,7 @@ misspelled field is rejected instead of silently ignored, and
 CI runs both, plus a frontend build, on every push touching
 `portfolio-tracker/` — see `.github/workflows/portfolio-tracker.yml`.
 
-277 tests. The pure analytics and FI modules, the importers, profiles,
+282 tests. The pure analytics and FI modules, the importers, profiles,
 privacy — and `test_api.py`, which goes through HTTP rather than around it,
 because the host check, the CORS configuration, profile selection from the
 cookie and the session lifecycle only exist on the request path.

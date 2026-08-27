@@ -35,9 +35,18 @@ def holding_out(h):
 
 def enrich_holding(d):
     """The computed half of holding_out, for a dict that already exists."""
+    # How much of this holding is equity, and which company sizes that
+    # equity sits in -- carried per holding so the Portfolio page can offer
+    # an override on anything the classifier could not read.
     d["current_value"] = round(analytics.holding_value(d), 2)
     d["invested"] = round(analytics.holding_cost(d), 2)
     d["bucket"] = analytics.holding_bucket(d)
+    equity_fraction = analytics.holding_splits(d).get("equity", 0.0)
+    d["has_equity"] = equity_fraction > 0
+    split, source = capmix.cap_split(d)
+    d["cap_split"] = split
+    d["cap_source"] = source
+    d["cap_label"] = capmix.describe(split, source)
     value = d["current_value"]
     d["splits"] = {k: round(value * v, 2)
                    for k, v in analytics.holding_splits(d).items()}

@@ -22,6 +22,8 @@ here to be argued with, which is why the reason travels with the number.
 import re
 
 BUCKETS = ("large", "mid", "small", "international")
+LABELS = {"large": "Large cap", "mid": "Mid cap", "small": "Small cap",
+          "international": "International"}
 
 # category -> (split, why). Splits are percentages of the fund's equity.
 CATEGORY_SPLITS = {
@@ -120,6 +122,24 @@ def cap_split(h):
             return _normalise(dict(split)), "%s — %s" % (
                 CATEGORY_LABELS[category], why)
     return {}, ""
+
+
+def describe(split, source):
+    """A short label for a cap split, for a table cell.
+
+    "Mid cap" when it is one bucket, "70/20/10 large/mid/small" when it is a
+    mandate spread, "" when nothing could be read -- which is the case that
+    needs to be visible, since it is the only one anyone has to act on.
+    """
+    if not split:
+        return ""
+    if len(split) == 1:
+        only = next(iter(split))
+        return LABELS[only]
+    parts = [(b, split[b]) for b in BUCKETS if split.get(b)]
+    return "%s %s" % (
+        "/".join(str(int(round(f * 100))) for _, f in parts),
+        "/".join(LABELS[b].split()[0].lower() for b, _ in parts))
 
 
 def cap_mix(holdings, equity_share, as_of=None, value_of=None):

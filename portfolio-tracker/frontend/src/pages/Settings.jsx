@@ -17,6 +17,16 @@ const SHORT = {
   cash: 'Cash', other: 'Other',
 }
 
+// Reads whatever is stored — the short code, or the long label an older
+// build saved — so the dropdown shows the user's actual answer either way.
+const basis = (value) => {
+  const text = (value || '').toLowerCase()
+  if (!text) return ''
+  if (text.includes('gross')) return 'gross'
+  if (text.includes('net') || text.includes('take')) return 'net'
+  return ''
+}
+
 const allocText = (t) => BUCKET_ORDER
   .filter((b) => (t[b] || 0) > 0)
   .map((b) => `${SHORT[b]} ${t[b]}%`)
@@ -196,15 +206,16 @@ export default function Settings({ owners, reload }) {
         </div>
         <div className="row">
           <label className="field">Salary figure you enter is
-            <select value={settings.income_basis || ''}
+            {/* A short code, not the label. Storing the display string
+                meant "net take-home (after tax and deductions)" never
+                equalled "net", so the app went on saying it was not set
+                however many times it was. Old saved values still read
+                correctly — the backend normalises by shape. */}
+            <select value={basis(settings.income_basis)}
               onChange={(e) => setSettings({ ...settings, income_basis: e.target.value })}>
               <option value="">Unspecified</option>
-              <option value="net take-home (after tax and deductions)">
-                Net take-home (after tax &amp; deductions)
-              </option>
-              <option value="gross (before tax and deductions)">
-                Gross (before tax &amp; deductions)
-              </option>
+              <option value="net">Net take-home (after tax &amp; deductions)</option>
+              <option value="gross">Gross (before tax &amp; deductions)</option>
             </select>
           </label>
         </div>

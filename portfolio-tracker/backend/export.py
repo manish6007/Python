@@ -145,8 +145,9 @@ def build_snapshot(holdings, loans, cashflow, drift, sugg, targets,
             "has_nominee": bool((p.get("nominee") or "").strip()),
         } for p in (policies or [])]) if insurance else None),
         "data_quality": {
-            "income_basis": income_basis or "unspecified (ask before assuming "
-                                            "net or gross)",
+            "income_basis": (analytics.income_basis_label(income_basis)
+                             or "unspecified (ask before assuming net "
+                                "or gross)"),
             "income_months_logged": cashflow.get("income_months"),
             "expense_months_logged": cashflow.get("expense_months"),
             "expenses_include_recurring": True,

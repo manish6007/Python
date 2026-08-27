@@ -295,6 +295,34 @@ def _emi_against_loans(ctx):
     return out
 
 
+# What the salary figure means. Stored as a short code, but the dropdown
+# once stored its own label -- "net take-home (after tax and deductions)" --
+# so anything already saved has to keep working. Read by shape rather than
+# by equality: a display string used as a stored key is exactly how "I set
+# that" and "it is not set" end up both being true.
+INCOME_BASIS_LABELS = {
+    "net": "net take-home (after tax and deductions)",
+    "gross": "gross (before tax and deductions)",
+}
+
+
+def normalise_income_basis(value):
+    """"net", "gross", or "" for anything that does not say."""
+    text = (value or "").strip().lower()
+    if not text:
+        return ""
+    if "gross" in text or text.startswith("before"):
+        return "gross"
+    if "net" in text or "take" in text or "hand" in text:
+        return "net"
+    return ""
+
+
+def income_basis_label(value):
+    """The readable phrase, for an export a stranger has to interpret."""
+    return INCOME_BASIS_LABELS.get(normalise_income_basis(value), "")
+
+
 @_check
 def _income_basis(ctx):
     """Gross or net changes what the surplus means.
@@ -304,7 +332,7 @@ def _income_basis(ctx):
     """
     if not ctx["income_monthly"]:
         return []
-    basis = (ctx["income_basis"] or "").lower()
+    basis = normalise_income_basis(ctx["income_basis"])
     if basis == "gross":
         return [{
             "level": "warning", "code": "income_is_gross",
@@ -313,7 +341,7 @@ def _income_basis(ctx):
                        "any PF deducted from salary is being subtracted "
                        "from money that never reached you. Enter take-home "
                        "pay for a surplus you can act on."}]
-    if basis not in ("net", "take_home"):
+    if basis != "net":
         return [{
             "level": "info", "code": "income_basis_unknown",
             "message": "Whether the salary entered is gross or take-home "

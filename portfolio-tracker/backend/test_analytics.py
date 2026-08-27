@@ -599,3 +599,47 @@ def test_the_breakeven_return_is_where_the_two_tie():
 
 def test_prepay_returns_none_when_the_emi_cannot_cover_interest():
     assert analytics.prepay_vs_invest(5000000, 18.0, 5000, 100000, 12) is None
+
+
+# ---- the salary basis, which is stored and then compared -----------------
+def test_a_saved_income_basis_is_recognised_however_it_was_worded():
+    """The dropdown once stored its own label, so "net take-home (after tax
+    and deductions)" never equalled "net" and the app went on saying it was
+    not set however many times it was set."""
+    for value in ("net", "NET", "net take-home (after tax and deductions)",
+                  "Net take-home", "take home", "in hand"):
+        assert analytics.normalise_income_basis(value) == "net", value
+    for value in ("gross", "GROSS", "gross (before tax and deductions)",
+                  "before tax"):
+        assert analytics.normalise_income_basis(value) == "gross", value
+    for value in ("", None, "   ", "something else"):
+        assert analytics.normalise_income_basis(value) == ""
+
+
+def test_setting_the_basis_clears_the_warning():
+    entries = [{"kind": "sip", "amount_monthly": 1000}]
+    codes = lambda basis: [w["code"] for w in analytics.reconcile(  # noqa: E731
+        entries, [], holdings=[], income_basis=basis, income_monthly=150000)]
+
+    assert "income_basis_unknown" in codes("")
+    assert "income_basis_unknown" in codes("something else")
+    # The long form an older build saved must count as answered.
+    assert "income_basis_unknown" not in codes(
+        "net take-home (after tax and deductions)")
+    assert "income_basis_unknown" not in codes("net")
+    assert "income_basis_unknown" not in codes("gross")
+
+
+def test_gross_pay_is_warned_about_rather_than_merely_noted():
+    codes = [w["code"] for w in analytics.reconcile(
+        [], [], holdings=[], income_basis="gross (before tax and deductions)",
+        income_monthly=150000)]
+    assert "income_is_gross" in codes
+
+
+def test_the_export_spells_the_basis_out_for_a_stranger():
+    assert analytics.income_basis_label("net") == \
+        "net take-home (after tax and deductions)"
+    assert analytics.income_basis_label("gross") == \
+        "gross (before tax and deductions)"
+    assert analytics.income_basis_label("") == ""

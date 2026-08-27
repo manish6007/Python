@@ -1298,7 +1298,13 @@ def put_settings(body: schemas.SettingsIn):
         set_setting(s, "targets", json.dumps(payload["targets"]))
     for k in SETTING_KEYS:
         if k in payload:
-            set_setting(s, k, str(payload[k]))
+            value = str(payload[k])
+            if k == "income_basis":
+                # Store the short code whatever the client sent, so an old
+                # saved label is rewritten the first time settings are saved
+                # rather than living on forever.
+                value = analytics.normalise_income_basis(value)
+            set_setting(s, k, value)
     s.close()
     return {"ok": True}
 

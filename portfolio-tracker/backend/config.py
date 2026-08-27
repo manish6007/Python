@@ -11,7 +11,12 @@ import os
 import shutil
 from datetime import datetime
 
-BASE = os.path.dirname(os.path.abspath(__file__))
+import paths
+
+# Both of these must sit somewhere that survives quitting the app. When it
+# runs as a built application the code unpacks into a temporary folder, so
+# "next to the code" is exactly the wrong answer.
+BASE = paths.default_data_dir()
 CONFIG_PATH = os.path.join(BASE, "app-config.json")
 ENV_DATA_DIR = "PORTFOLIO_DATA_DIR"
 

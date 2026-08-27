@@ -132,36 +132,74 @@ answer. Off by default.
 
 ## Running it
 
+**It runs on your own machine.** That is the point of it — nobody is going to
+hand their salary, portfolio and folio numbers to someone else's server, and
+this app never asks them to. There is no account to make, no server to sign
+in to, and nothing to trust: see [Privacy and security](#privacy-and-security),
+which the app itself will show you.
+
+### The easy way — download and run
+
+1. Download the file for your machine from the
+   [releases page](../../releases): `PortfolioTracker.exe` on Windows,
+   `PortfolioTracker` on macOS or Linux.
+2. Run it. A small window opens saying where your data is kept, and your
+   browser opens at the app.
+3. Close that window when you are done. Nothing keeps running afterwards.
+
+No Python, no Node, no installer, no admin rights. The first run creates your
+data folder:
+
+| | where your portfolio is kept |
+|---|---|
+| Windows | `%LOCALAPPDATA%\PortfolioTracker` |
+| macOS | `~/Library/Application Support/PortfolioTracker` |
+| Linux | `~/.local/share/PortfolioTracker` |
+
+**On a USB stick.** Put the app and a `portfolio.db` in the same folder and it
+uses that one, so the whole thing travels with the stick and leaves nothing
+on the machine.
+
+macOS and Windows will warn that the app is from an unidentified developer,
+because it is not code-signed — signing costs money and buys you nothing here
+that reading the source does not. On macOS: right-click → Open. On Windows:
+More info → Run anyway.
+
+### From source
+
 Prerequisites: Python 3.9+, Node 18+.
 
 ```bash
-# 1. Backend dependencies
-cd backend
-pip install -r requirements.txt
-
-# 2. Build the frontend once (repeat only after UI changes)
-cd ../frontend
-npm install
-npm run build
-
-# 3. Start — one process serves the app and the API
-cd ../backend
-uvicorn main:app --host 127.0.0.1 --port 8000
+./start.sh          # macOS / Linux
+start.bat           # Windows
 ```
 
-Open <http://localhost:8000>. `--host 127.0.0.1` keeps it off your network;
-the app also refuses any request that did not arrive at a loopback address.
+That builds the interface and sets up Python on the first run only, then
+starts the app the same way the downloaded version does.
 
-All data lives in `backend/portfolio.db` by default. **Back up that file.**
-Delete it to start over. To keep it elsewhere — an encrypted volume, a synced
-folder — set `PORTFOLIO_DATA_DIR`, or move it from the Privacy page.
+To build the downloadable app yourself:
 
-For frontend development use two terminals instead — `PORTFOLIO_DEV=1 uvicorn
-main:app --reload --port 8000` and `npm run dev` — and open the Vite URL. The
-`PORTFOLIO_DEV=1` is what allows the Vite origin through; without it,
-cross-origin requests are refused (which is the point in production).
+```bash
+cd frontend && npm install && npm run build && cd ..
+pip install -r backend/requirements.txt pyinstaller
+pyinstaller --clean --noconfirm portfolio-tracker.spec   # -> dist/
+```
 
----
+### For development
+
+Two terminals, so the UI reloads as you edit it:
+
+```bash
+PORTFOLIO_DEV=1 uvicorn main:app --reload --port 8000    # in backend/
+npm run dev                                              # in frontend/
+```
+
+Open the Vite URL. `PORTFOLIO_DEV=1` is what allows that origin through;
+without it, cross-origin requests are refused, which is the point in
+production.
+
+**Back up your data folder** — the app shows you exactly where it is on the
+Privacy page. Copy that folder and you have copied everything.
 
 ## User guide
 
@@ -362,6 +400,11 @@ asset-class level, never specific products — and labelled educational.
 
 ## Privacy and security
 
+- **There is no account, because there is nobody to log in to.** The app
+  serves only the machine it runs on, and whoever is at the keyboard is the
+  user. That is the design, not a gap: a personal-finance app with accounts
+  needs a server holding other people's salaries and folio numbers, and
+  nobody sensible hands those over. To use it elsewhere, run a copy there.
 - **Nothing outside this machine can reach the app.** It refuses requests
   that did not arrive at localhost, allows no cross-origin access, and rejects
   cross-site writes. There is no login because there is no boundary to cross;
@@ -433,7 +476,7 @@ misspelled field is rejected instead of silently ignored, and
 CI runs both, plus a frontend build, on every push touching
 `portfolio-tracker/` — see `.github/workflows/portfolio-tracker.yml`.
 
-286 tests. The pure analytics and FI modules, the importers, profiles,
+291 tests. The pure analytics and FI modules, the importers, profiles,
 privacy — and `test_api.py`, which goes through HTTP rather than around it,
 because the host check, the CORS configuration, profile selection from the
 cookie and the session lifecycle only exist on the request path.

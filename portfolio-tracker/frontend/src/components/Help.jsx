@@ -147,8 +147,13 @@ const SECTIONS = [
     id: 'privacy',
     title: 'Privacy',
     body: [
+      ['No account, and nowhere to sign in',
+        ['There is no login because there is nobody to log in to. The app runs on this machine and serves only this machine; whoever is at the keyboard is the user.',
+          'That is deliberate rather than unfinished. The moment a personal-finance app has accounts, it has a server holding other people\u2019s salaries and folio numbers — and nobody sensible hands those over. Keeping it local is the feature.',
+          'To use it on another computer, run a copy there. To take it with you, put the app and your portfolio.db in one folder on a USB stick and it will use that copy wherever it is plugged in.']],
       ['Where your data lives',
         ['SQLite files on this machine. No accounts, no cloud, no telemetry. The Privacy page shows their exact paths — back those up and you have backed up everything.',
+          'The downloaded app keeps them in the place your operating system reserves for a user\u2019s own files: %LOCALAPPDATA%\\PortfolioTracker on Windows, ~/Library/Application Support/PortfolioTracker on macOS, ~/.local/share/PortfolioTracker on Linux.',
           'Keep them somewhere else if you prefer: point the app at an encrypted volume, a synced folder or a USB stick from the Privacy page. The files are copied and verified before the switch, and the originals are left for you to delete.',
           'There is no field anywhere for a password, PIN or security answer, and there will not be.']],
       ['Check it rather than believe it',

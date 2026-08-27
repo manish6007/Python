@@ -27,6 +27,7 @@ import fi as fi_mod
 import importers as imp_mod
 import matching
 import netlog
+import paths
 import pricing
 import profiles as profiles_mod
 import schemas
@@ -1852,7 +1853,6 @@ def reset_all(body: schemas.ConfirmIn):
 
 
 # Serve the built React app if present (production single-process mode).
-DIST = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                    "frontend", "dist")
+DIST = paths.frontend_dist()
 if os.path.isdir(DIST):
     app.mount("/", StaticFiles(directory=DIST, html=True), name="frontend")

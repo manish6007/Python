@@ -5,6 +5,8 @@ selection from the cookie, the session lifecycle, the confirmation guards --
 only exists on the request path, so calling the endpoint functions directly
 proves none of it. These go through the app.
 """
+import sys
+
 import pytest
 from datetime import date
 from fastapi.testclient import TestClient
@@ -870,3 +872,63 @@ def test_the_chart_can_name_what_it_could_not_classify(client):
     unnamed = [r for r in mix["holdings"] if r["why"] == "not classified"]
     assert [r["name"] for r in unnamed] == ["Tips Music"]
     assert unnamed[0]["equity"] == 51000
+
+
+# ---- running as a downloaded application --------------------------------
+def test_the_data_folder_is_never_inside_the_bundle(monkeypatch):
+    """A PyInstaller bundle unpacks into a temporary folder that is deleted
+    on quit. Writing the portfolio there would lose it every time."""
+    import paths
+
+    monkeypatch.setattr(paths, "is_frozen", lambda: True)
+    monkeypatch.setattr(sys, "_MEIPASS", "/tmp/_MEI_unpacked", raising=False)
+    monkeypatch.setattr(paths, "portable_dir", lambda: "")
+
+    assert paths.bundle_dir() == "/tmp/_MEI_unpacked"
+    assert paths.default_data_dir() == paths.user_data_dir()
+    assert "_MEI" not in paths.default_data_dir()
+
+
+def test_a_portfolio_beside_the_app_is_used_where_it_lies(tmp_path,
+                                                          monkeypatch):
+    """Someone who copies their data onto a USB stick beside the app means
+    that copy to be used."""
+    import paths
+
+    monkeypatch.setattr(paths, "is_frozen", lambda: True)
+    monkeypatch.setattr(paths, "app_dir", lambda: str(tmp_path))
+    assert paths.portable_dir() == ""              # nothing there yet
+    assert paths.default_data_dir() == paths.user_data_dir()
+
+    (tmp_path / "portfolio.db").write_bytes(b"")
+    assert paths.default_data_dir() == str(tmp_path)
+
+
+def test_the_frontend_is_found_inside_the_bundle(monkeypatch):
+    import paths
+
+    monkeypatch.setattr(paths, "is_frozen", lambda: True)
+    monkeypatch.setattr(sys, "_MEIPASS", "/tmp/_MEI_unpacked", raising=False)
+    assert paths.frontend_dist() == "/tmp/_MEI_unpacked/frontend/dist"
+
+
+def test_a_busy_port_does_not_stop_the_app(monkeypatch):
+    """A second copy, or anything else on that port, must not put a stack
+    trace on a stranger's screen."""
+    import socket
+
+    import desktop
+
+    taken = socket.socket()
+    taken.bind((desktop.HOST, 0))
+    taken.listen(1)                                # exactly what a server does
+    port = taken.getsockname()[1]
+    try:
+        assert desktop.free_port(port) == port + 1
+    finally:
+        taken.close()
+
+
+def test_the_app_only_ever_serves_the_machine_it_is_on():
+    import desktop
+    assert desktop.HOST == "127.0.0.1"             # never 0.0.0.0

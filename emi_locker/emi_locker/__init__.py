@@ -5,9 +5,9 @@ blueprint: licensing/reseller quota, customer and device onboarding, EMI
 scheduling, verified payments, the overdue lifecycle and audited device
 actions.
 
-The modules here are transport-agnostic. ``api.py`` puts a small HTTP layer
-on top of them to show the endpoint shape from the blueprint; the same calls
-would sit behind FastAPI, NestJS or Laravel unchanged.
+The modules here are transport-agnostic: they know nothing about HTTP. The
+FastAPI app in ``backend/`` is a thin layer over them, and the same calls
+would sit behind NestJS or Laravel unchanged.
 """
 from __future__ import annotations
 

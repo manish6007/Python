@@ -26,7 +26,7 @@ from typing import Any, Dict, Optional
 
 import jwt
 
-from emi_locker.core import Actor, now
+from emi_locker.core import Actor
 from emi_locker.errors import PermissionDenied, ValidationError
 
 from .config import settings

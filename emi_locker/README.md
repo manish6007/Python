@@ -1,32 +1,57 @@
-# EMI Locker — core reference implementation
+# EMI Locker
 
-A runnable implementation of the risky parts of the Ashish Enterprises EMI
-Locker blueprint: reseller licensing with activation quota, customer and device
-onboarding, EMI scheduling, verified payments, the overdue lifecycle, and
-audited device actions.
+A working local build of the Ashish Enterprises EMI Locker platform: a Python
+backend and a Flutter Android app covering both the **Customer** and
+**Retailer** sides, on top of a tested domain core.
 
-It exists to answer one question — *can this be built, and what are the parts
-that bite?* — with code and tests instead of an opinion. See
-[FEASIBILITY.md](FEASIBILITY.md) for the assessment.
+**New here? Go straight to [docs/WINDOWS_SETUP.md](docs/WINDOWS_SETUP.md).**
+It takes you from a clean Windows PC to both apps running, and ends with a
+scripted walkthrough of the whole flow.
 
-**This is a reference core, not a product.** It uses SQLite and a static-token
-HTTP demonstrator so it runs anywhere with no dependencies. A production build
-would keep the service layer's shape and swap in PostgreSQL, real auth and a
-proper web framework.
+[FEASIBILITY.md](FEASIBILITY.md) is the assessment of what can and cannot be
+built, including the parts that are not a coding job at all.
 
-## Run it
+## What is here
 
-Standard library only — Python 3.8+.
+```
+emi_locker/
+  emi_locker/      domain core - licensing, finance, EMI, payments, devices
+  backend/         FastAPI app: OTP login, REST API, mock gateway, seed data
+  mobile/          Flutter app: Customer + Retailer
+  docs/            setup guide
+  start-backend.bat / start-backend.sh
+```
+
+## Quick start
 
 ```bash
-# the blueprint's own worked example, end to end
+./start-backend.sh            # Windows: double-click start-backend.bat
+```
+
+Then, in a second terminal:
+
+```bash
+cd mobile/emi_locker_app
+flutter pub get
+flutter run
+```
+
+Sign in with `9000000003` (retailer) or `9876543210` (customer). The OTP is
+printed by the backend and filled in for you - local mode returns it instead
+of sending an SMS.
+
+## Tests
+
+```bash
+python -m pytest tests backend/tests -q      # 106: domain core + API
+cd mobile/emi_locker_app && flutter test     # 36: app
+```
+
+There is also a dependency-free walkthrough of the domain core on its own,
+which prints the blueprint's worked example end to end:
+
+```bash
 python -m emi_locker.demo
-
-# the demo HTTP API
-python -m emi_locker.api --port 8080 --db emi.db
-
-# the test-suite (needs pytest)
-python -m pytest tests/ -q
 ```
 
 ## What the demo shows
@@ -49,7 +74,10 @@ python -m pytest tests/ -q
 14. Admin dashboard and audit trail
 ```
 
-## Layout
+## Domain core modules
+
+The backend is a thin HTTP layer over these. Business rules live here, so they
+are covered by the core's own tests and cannot drift between transports.
 
 | Module | Responsibility |
 |---|---|
@@ -61,7 +89,6 @@ python -m pytest tests/ -q
 | `lifecycle.py` | Due/grace/overdue sweep, reminders, closure certificate |
 | `devices.py` | Device command queue, eligibility, dual control, provider adapter |
 | `reports.py` | Scoped dashboards and reports |
-| `api.py` | Demo HTTP surface matching the blueprint's endpoint list |
 
 ## Design decisions worth keeping
 
@@ -80,8 +107,12 @@ python -m pytest tests/ -q
   reports that nothing was sent, because an app cannot restrict a device on its
   own. See §3.1 of the feasibility note.
 
-## Not included
+## Not built yet
 
-Deliberately out of scope for a core demonstrator: OTP login and sessions, KYC
-document storage, SMS/WhatsApp/push delivery, commission calculation, the three
-mobile apps, the admin web UI, and any real device-management integration.
+Deliberately out of scope for a local build: KYC document storage,
+SMS/WhatsApp/push delivery, commission calculation, the Distributor app, the
+Super Admin web panel, and any real device-management integration. Payments run
+against a local mock gateway rather than a real one.
+
+See [FEASIBILITY.md](FEASIBILITY.md) §4 for the order these come in, and §3 for
+the parts that depend on a contract or a lawyer rather than on code.

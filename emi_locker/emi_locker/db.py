@@ -39,6 +39,9 @@ CREATE TABLE IF NOT EXISTS users (
     created_at  TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_users_parent ON users(parent_id);
+-- Login is by mobile number, so one number cannot address two accounts.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_mobile
+    ON users(mobile) WHERE mobile IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS audit_logs (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -152,6 +155,7 @@ CREATE TABLE IF NOT EXISTS license_renewals (
 CREATE TABLE IF NOT EXISTS customers (
     id           TEXT PRIMARY KEY,
     retailer_id  TEXT NOT NULL REFERENCES users(id),
+    user_id      TEXT REFERENCES users(id),
     name         TEXT NOT NULL,
     mobile       TEXT NOT NULL,
     address      TEXT,
@@ -295,6 +299,14 @@ CREATE TABLE IF NOT EXISTS device_command_logs (
     event      TEXT NOT NULL,
     detail     TEXT,
     created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS auth_otps (
+    mobile       TEXT PRIMARY KEY,
+    code_hash    TEXT NOT NULL,
+    expires_at   TEXT NOT NULL,
+    attempts     INTEGER NOT NULL DEFAULT 0,
+    last_sent_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS settings (

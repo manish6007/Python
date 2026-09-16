@@ -93,14 +93,23 @@ def create_customer(
     assert_can_touch_retailer(conn, actor, retailer_id)
     if not mobile or not mobile.isdigit() or len(mobile) < 10:
         raise ValidationError("a valid mobile number is required")
+    if conn.execute("SELECT 1 FROM users WHERE mobile = ?", (mobile,)).fetchone():
+        raise ValidationError("mobile %s is already registered" % mobile)
+
     cid = next_id(conn, "customer")
+    # Every customer gets a login identity of their own: the customer app
+    # authenticates against users, and a customer with no user row could never
+    # sign in to see their own schedule.
+    from .core import create_user
+
+    user_id = create_user(conn, "CUSTOMER", name, mobile=mobile, actor=actor)
     conn.execute(
-        "INSERT INTO customers(id, retailer_id, name, mobile, address, kyc_status, created_at)"
-        " VALUES (?,?,?,?,?, 'PENDING', ?)",
-        (cid, retailer_id, name, mobile, address, now()),
+        "INSERT INTO customers(id, retailer_id, user_id, name, mobile, address,"
+        " kyc_status, created_at) VALUES (?,?,?,?,?,?, 'PENDING', ?)",
+        (cid, retailer_id, user_id, name, mobile, address, now()),
     )
     audit(conn, actor, "customer.create", "customer", cid,
-          after={"retailer_id": retailer_id, "name": name})
+          after={"retailer_id": retailer_id, "name": name, "user_id": user_id})
     return cid
 
 

@@ -1,6 +1,7 @@
+import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
 
 /// An error the backend reported in its own words.
@@ -23,18 +24,29 @@ class ApiException implements Exception {
 
 /// Thin wrapper over the EMI Locker API.
 ///
-/// The base URL defaults to `10.0.2.2`, which is how an Android emulator
-/// reaches a server running on your own machine. Override it for a real phone:
+/// The right default depends on where the code is running, and getting this
+/// wrong is the first thing that breaks:
+///
+/// * **Android emulator** - `10.0.2.2` is the emulator's alias for your own
+///   machine. `localhost` there means the emulator itself.
+/// * **Flutter web** (the admin panel) - the browser is already on your
+///   machine, so `localhost` is correct and `10.0.2.2` means nothing.
+///
+/// A real phone is neither, so pass your PC's LAN address:
 ///
 ///   flutter run --dart-define=API_BASE_URL=http://192.168.1.5:8000
 class ApiClient {
   ApiClient({String? baseUrl, http.Client? httpClient})
-      : baseUrl = baseUrl ??
-            const String.fromEnvironment(
-              'API_BASE_URL',
-              defaultValue: 'http://10.0.2.2:8000',
-            ),
+      : baseUrl = baseUrl ?? defaultBaseUrl(),
         _http = httpClient ?? http.Client();
+
+  static const _configuredBaseUrl =
+      String.fromEnvironment('API_BASE_URL', defaultValue: '');
+
+  static String defaultBaseUrl() {
+    if (_configuredBaseUrl.isNotEmpty) return _configuredBaseUrl;
+    return kIsWeb ? 'http://localhost:8000' : 'http://10.0.2.2:8000';
+  }
 
   final String baseUrl;
   final http.Client _http;
@@ -65,6 +77,13 @@ class ApiClient {
             body: jsonEncode(body ?? {}),
           ));
 
+  Future<dynamic> put(String path, {Map<String, dynamic>? body}) =>
+      _send(() => _http.put(
+            _uri(path, null),
+            headers: _headers(),
+            body: jsonEncode(body ?? {}),
+          ));
+
   Uri _uri(String path, Map<String, String>? query) =>
       Uri.parse('$baseUrl$path').replace(queryParameters: query);
 
@@ -72,15 +91,17 @@ class ApiClient {
     http.Response response;
     try {
       response = await request().timeout(const Duration(seconds: 20));
-    } on SocketException {
+    } on TimeoutException {
       throw ApiException(
         'NETWORK',
-        'Cannot reach the server at $baseUrl.\n\n'
-            'Is the backend running? On an emulator the address must be '
-            '10.0.2.2, not localhost.',
+        'The server did not answer in time. Is it still running?',
       );
+    } on http.ClientException {
+      // What a refused or dropped connection looks like on both targets:
+      // ClientException on web, and a SocketException wrapped in one on IO.
+      throw ApiException('NETWORK', _unreachableMessage());
     } catch (error) {
-      throw ApiException('NETWORK', 'Network problem: $error');
+      throw ApiException('NETWORK', '$error\n\n${_unreachableMessage()}');
     }
 
     final text = response.body;
@@ -122,6 +143,14 @@ class ApiClient {
       'Request failed (HTTP ${response.statusCode}).',
       statusCode: response.statusCode,
     );
+  }
+
+  String _unreachableMessage() {
+    final hint = kIsWeb
+        ? 'In a browser the address must be localhost, not 10.0.2.2.'
+        : 'On an Android emulator the address must be 10.0.2.2, not localhost.';
+    return 'Cannot reach the server at $baseUrl.\n\n'
+        'Is the backend running? $hint';
   }
 
   String _readableDetail(dynamic detail) {

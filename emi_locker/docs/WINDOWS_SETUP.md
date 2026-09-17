@@ -3,12 +3,16 @@
 Start to finish, from a clean Windows PC to both apps running against your own
 backend. Expect **60–90 minutes**, most of it downloads.
 
-You need two things running at once:
+You need the backend running, plus whichever front end you are using:
 
 | Part | What it is | Where it runs |
 |---|---|---|
 | **Backend** | Python API + database | A terminal window on your PC |
-| **App** | Flutter (Customer + Retailer) | Android emulator, or a real phone |
+| **Apps** | Customer, Retailer, Distributor | Android emulator, or a real phone |
+| **Admin panel** | Super Admin web panel | Chrome on your PC |
+
+All four front ends are one Flutter project. The role you sign in as decides
+which one you get, so there is nothing extra to install for the admin panel.
 
 ---
 
@@ -106,8 +110,11 @@ The seed step prints the numbers you will sign in with:
 
 ```
   Retailer app    9000000003   Sharma Mobiles
+  Retailer app    9000000004   Verma Telecom
   Customer app    9876543210   Ramesh Kumar (has a live finance)
   Customer app    9876543211   Sunita Devi (no finance yet)
+  Distributor app 9000000002   North Distributor
+  Admin panel     9000000001   Ashish Enterprises (web)
 ```
 
 **Check it works**: open <http://localhost:8000/docs> in your browser. You
@@ -129,6 +136,33 @@ Flutter will start your emulator if it is not already running, build the app
 it.
 
 That is it. The app opens on the sign-in screen.
+
+## Step 6b — Open the admin panel
+
+The Super Admin panel is the same project, run in Chrome instead. In a **third**
+Command Prompt:
+
+```bat
+cd C:\src\Python\emi_locker\mobile\emi_locker_app
+flutter run -d chrome
+```
+
+Chrome opens automatically. Sign in with **9000000001**.
+
+> On web the app talks to `http://localhost:8000` by itself — `10.0.2.2` is an
+> emulator-only address and means nothing in a browser. You do not have to
+> configure anything.
+
+To build a copy you can serve to other people on your network instead:
+
+```bat
+flutter build web
+python -m http.server 8080 --directory build\web
+```
+
+then open <http://localhost:8080>. The panel is fully self-contained: the
+graphics engine and fonts are served from the build, so it works on a machine
+with no internet at all.
 
 ---
 
@@ -181,6 +215,36 @@ These should all fail, and the message should tell you why:
     moves instalments to due / grace / overdue.
 11. **Collections** now lists what to chase. Tap one → **Confirm collection** →
     a cash receipt is issued. The customer sees the same receipt in their app.
+
+### As the distributor
+
+12. Sign out and sign in with **9000000002**. The dashboard shows activation
+    stock: 350 of 500 left, 150 already pushed down to retailers.
+13. **Retailers** lists Sharma Mobiles and Verma Telecom with the two numbers a
+    distributor acts on — activations left, and money outstanding.
+14. Open one → **Allocate activations** → 25 → **Allocate**. Their balance goes
+    up, yours goes down. Try allocating 10,000 and it is refused: you cannot
+    hand out stock you do not hold.
+15. **Commission** says no rate has been configured. That is deliberate — the
+    rates are a business decision, set in the admin panel, and the software
+    does not invent one. You will set it in the next section.
+
+### As the Super Admin (in Chrome)
+
+16. In the browser, sign in with **9000000001**.
+17. **Network** shows the distributor with its two retailers. Try the ⊘ button
+    on Sharma Mobiles: suspending needs a reason, which goes into the audit
+    log. Suspend them, then switch to the retailer app — they are locked out
+    immediately, not at their next login. Reactivate them afterwards.
+18. **Licences** → **Issue licence** → pick BUSINESS → **Issue**. The key is
+    shown once and stored only as a hash. Copy it, then sign in as
+    **9000000004** on the phone and redeem it under Licences.
+19. **Settings** → change *Paid to the retailer for each device it activates*
+    to ₹150. Go back to the distributor app: Commission now shows real
+    figures.
+20. **Audit log** shows every one of those actions, with who did it and what
+    the value was before. Nothing in the panel can edit or delete it — the
+    database rejects any attempt.
 
 ---
 
@@ -241,6 +305,16 @@ Do not interrupt it.
 **The app shows old data**
 Pull down on any list to refresh.
 
+**The admin panel is a blank white page**
+Rebuild it: `flutter build web`. The graphics engine is served from the build
+itself, so a blank page usually means an old build is being served from a
+stale folder. Hard-refresh the browser with `Ctrl+Shift+R`.
+
+**The admin panel cannot reach the backend**
+In a browser the address is `localhost:8000`, not `10.0.2.2:8000`. That is
+automatic — if you have overridden `API_BASE_URL` with an emulator address,
+remove it for the web run.
+
 **I want to start over with clean data**
 Stop the backend (`Ctrl+C`) and run:
 
@@ -276,7 +350,13 @@ So you are not surprised:
   Enterprise EMM. See §3.1 of [FEASIBILITY.md](../FEASIBILITY.md).
 - **The data lives in a file** (`emi_locker.db`) next to the backend. Delete it
   to start fresh. Production would use PostgreSQL.
-- **Customer and Retailer are one app here**, and the role you sign in as
-  decides what you see. For Play Store release they become two separate apps;
-  the code is already split into `features/customer` and `features/retailer` so
-  that is a move, not a rewrite.
+- **All four front ends are one project here**, and the role you sign in as
+  decides what you see. For release, Customer, Retailer and Distributor become
+  three Play listings and the admin panel a hosted web build; the code is
+  already split into `features/customer`, `features/retailer`,
+  `features/distributor` and `features/admin`, so that is a move rather than a
+  rewrite.
+- **Commission rates start at zero** and stay there until an admin sets them.
+  The blueprint lists possible commission structures but fixes no rate, because
+  that is a commercial decision — so the software shows "not configured"
+  instead of inventing a percentage.

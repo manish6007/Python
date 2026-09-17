@@ -9,6 +9,7 @@ import sqlite3
 from typing import Any, Dict, List
 
 from .core import Actor, scope_of
+from .settings_store import commission_rules
 
 
 def _retailer_filter(conn: sqlite3.Connection, actor: Actor):
@@ -79,6 +80,62 @@ def license_utilisation(conn: sqlite3.Connection, actor: Actor) -> List[Dict[str
             (actor.user_id, actor.user_id),
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def commission_report(conn: sqlite3.Connection, actor: Actor) -> Dict[str, Any]:
+    """Commission earned per account, under the rates an admin has configured.
+
+    Returns ``configured: False`` and zero amounts until someone sets a rate.
+    Guessing a percentage here would put a number in front of a distributor
+    that nobody in the business ever agreed to.
+    """
+    actor.require_role("SUPER_ADMIN", "DISTRIBUTOR")
+    rules = commission_rules(conn)
+
+    if actor.is_admin:
+        where, params = "", ()
+    else:
+        where = " AND (u.id = ? OR u.parent_id = ?)"
+        params = (actor.user_id, actor.user_id)
+
+    rows = conn.execute(
+        "SELECT u.id owner_id, u.name, u.role,"
+        " COUNT(a.id) activations,"
+        " COALESCE(SUM(f.principal), 0) financed_paise"
+        " FROM users u"
+        " LEFT JOIN license_activations a"
+        "        ON a.owner_id = u.id AND a.status = 'CONSUMED'"
+        " LEFT JOIN finance_accounts f ON f.id = a.finance_id"
+        " WHERE u.role IN ('DISTRIBUTOR','RETAILER')" + where +
+        " GROUP BY u.id ORDER BY u.role, u.name",
+        params,
+    ).fetchall()
+
+    out = []
+    for row in rows:
+        if row["role"] == "RETAILER":
+            per_unit = rules["retailer_per_activation_paise"]
+            percent_bp = 0
+        else:
+            per_unit = rules["distributor_per_activation_paise"]
+            percent_bp = rules["distributor_percent_of_financed_bp"]
+        # Integer maths throughout: basis points of paise, floor-divided.
+        earned = row["activations"] * per_unit + (
+            row["financed_paise"] * percent_bp) // 10000
+        out.append(dict(row, commission_paise=earned))
+
+    # A distributor also earns on what its retailers activated.
+    if not actor.is_admin:
+        retailer_units = sum(r["activations"] for r in out if r["role"] == "RETAILER")
+        for entry in out:
+            if entry["owner_id"] == actor.user_id:
+                entry["downstream_activations"] = retailer_units
+
+    return {
+        "rules": rules,
+        "rows": out,
+        "total_paise": sum(r["commission_paise"] for r in out),
+    }
 
 
 def admin_dashboard(conn: sqlite3.Connection, actor: Actor) -> Dict[str, Any]:

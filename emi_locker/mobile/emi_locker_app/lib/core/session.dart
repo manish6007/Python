@@ -33,6 +33,8 @@ class Session extends ChangeNotifier {
 
   bool get isRetailer => role == 'RETAILER' || role == 'STAFF';
   bool get isCustomer => role == 'CUSTOMER';
+  bool get isDistributor => role == 'DISTRIBUTOR';
+  bool get isAdmin => role == 'SUPER_ADMIN';
 
   /// Reload a previous sign-in, if the saved token is still valid.
   Future<void> restore() async {

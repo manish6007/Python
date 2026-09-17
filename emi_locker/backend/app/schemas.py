@@ -78,6 +78,46 @@ class DeviceActionIn(BaseModel):
     reason: str = Field(min_length=3)
 
 
+class CreateUserIn(BaseModel):
+    role: str = Field(pattern="^(DISTRIBUTOR|RETAILER|STAFF)$")
+    name: str = Field(min_length=2, max_length=100)
+    mobile: str
+    parent_id: Optional[str] = Field(
+        default=None,
+        description="Distributor for a retailer; retailer for collection staff",
+    )
+
+
+class UserStatusIn(BaseModel):
+    status: str = Field(pattern="^(ACTIVE|SUSPENDED)$")
+    reason: str = Field(min_length=3, max_length=200)
+
+
+class PlanIn(BaseModel):
+    name: str = Field(min_length=2, max_length=50)
+    quota: int = Field(gt=0, le=100000)
+    price_paise: int = Field(ge=0)
+    validity_days: int = Field(gt=0, le=3650)
+
+
+class GenerateLicenseIn(BaseModel):
+    plan_id: str
+    owner_type: str = Field(pattern="^(DISTRIBUTOR|RETAILER|DIRECT)$")
+    owner_id: Optional[str] = None
+    quota: Optional[int] = Field(default=None, gt=0)
+    validity_days: Optional[int] = Field(default=None, gt=0)
+
+
+class LicenseStatusIn(BaseModel):
+    status: str = Field(pattern="^(ACTIVE|SUSPENDED|REVOKED)$")
+    reason: str = Field(min_length=3, max_length=200)
+
+
+class SettingIn(BaseModel):
+    key: str
+    value: Any
+
+
 class MockPayIn(BaseModel):
     """Local-only: stands in for the customer completing payment at a gateway."""
 

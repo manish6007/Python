@@ -21,6 +21,7 @@ from .routers import (
     admin_router,
     auth_router,
     customer_router,
+    distributor_router,
     license_router,
     payment_router,
     retailer_router,
@@ -69,6 +70,7 @@ def create_app(db_path: str = None) -> FastAPI:
     app.include_router(auth_router.router)
     app.include_router(retailer_router.router)
     app.include_router(customer_router.router)
+    app.include_router(distributor_router.router)
     app.include_router(payment_router.router)
     app.include_router(license_router.router)
     app.include_router(admin_router.router)

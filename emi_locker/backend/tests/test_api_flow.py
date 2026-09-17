@@ -403,14 +403,15 @@ def test_admin_dashboard_is_admin_only(client):
     admin = login(client, ADMIN_MOBILE)["token"]
     body = client.get("/reports/dashboard", headers=auth(admin))
     assert body.status_code == 200
-    assert body.json()["customers"] == 2
+    # Two customers under Sharma Mobiles, one under Verma Telecom.
+    assert body.json()["customers"] == 3
 
 
 def test_distributor_sees_its_own_licence_utilisation(client):
     token = login(client, DISTRIBUTOR_MOBILE)["token"]
     rows = client.get("/reports/licenses", headers=auth(token)).json()["rows"]
     owners = {r["owner_id"] for r in rows}
-    assert len(owners) == 2  # itself and its one retailer
+    assert len(owners) == 3  # itself and its two retailers
 
 
 def test_openapi_document_builds(client):

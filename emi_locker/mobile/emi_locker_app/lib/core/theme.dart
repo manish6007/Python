@@ -21,6 +21,9 @@ class AppTheme {
   static ThemeData _base(ColorScheme scheme) => ThemeData(
         colorScheme: scheme,
         useMaterial3: true,
+        // Use the bundled Roboto, so nothing is fetched from a font CDN at
+        // runtime. See the `fonts:` section of pubspec.yaml.
+        fontFamily: 'Roboto',
         appBarTheme: AppBarTheme(
           backgroundColor: scheme.surface,
           foregroundColor: scheme.onSurface,

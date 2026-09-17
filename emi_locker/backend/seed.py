@@ -22,11 +22,14 @@ from emi_locker.db import file_db, tx
 ADMIN_MOBILE = "9000000001"
 DISTRIBUTOR_MOBILE = "9000000002"
 RETAILER_MOBILE = "9000000003"
+RETAILER2_MOBILE = "9000000004"
 CUSTOMER_MOBILE = "9876543210"
 CUSTOMER2_MOBILE = "9876543211"
 
 DEMO_IMEI = "490154203237518"
 DEMO_IMEI_2 = "356938035643809"
+DEMO_IMEI_3 = "352099001761481"
+SPARE_IMEI = "860321035678902"
 
 
 def seed(db_path: str, reset: bool = False) -> None:
@@ -51,6 +54,10 @@ def seed(db_path: str, reset: bool = False) -> None:
         retailer_id = create_user(conn, "RETAILER", "Sharma Mobiles", RETAILER_MOBILE,
                                   parent_id=dist_id, actor=admin)
         retailer = Actor(retailer_id, "RETAILER", parent_id=dist_id)
+        # A second retailer, so the Distributor app has a network to compare.
+        retailer2_id = create_user(conn, "RETAILER", "Verma Telecom", RETAILER2_MOBILE,
+                                   parent_id=dist_id, actor=admin)
+        retailer2 = Actor(retailer2_id, "RETAILER", parent_id=dist_id)
 
         licensing.create_plan(conn, admin, "STARTER", 10, rupees(5000), 30)
         licensing.create_plan(conn, admin, "BUSINESS", 100, rupees(25000), 365)
@@ -59,6 +66,7 @@ def seed(db_path: str, reset: bool = False) -> None:
         issued = licensing.generate_license(conn, admin, premium, "DISTRIBUTOR")
         licensing.redeem_license(conn, dist, issued["key"])
         licensing.allocate_quota(conn, dist, retailer_id, 100)
+        licensing.allocate_quota(conn, dist, retailer2_id, 50)
 
     with tx(conn):
         # One customer with a live finance, so the Customer app has something
@@ -79,17 +87,30 @@ def seed(db_path: str, reset: bool = False) -> None:
         for consent in finance_mod.REQUIRED_CONSENTS:
             finance_mod.record_consent(conn, retailer, cust2_id, consent, "v1")
 
+    with tx(conn):
+        # One live finance at the second retailer too, so distributor reports
+        # have more than a single row in them.
+        cust3_id = finance_mod.create_customer(
+            conn, retailer2, retailer2_id, "Imran Sheikh", "9876543212", "Dewas, MP")
+        for consent in finance_mod.REQUIRED_CONSENTS:
+            finance_mod.record_consent(conn, retailer2, cust3_id, consent, "v1")
+        finance_mod.create_finance(
+            conn, retailer2, cust3_id, imei=DEMO_IMEI_3,
+            product_price=rupees(18000), down_payment=rupees(4000), tenure_months=7,
+            model="Redmi 14C", grace_days=5)
+
     print("seeded %s\n" % db_path)
     print("Sign in with these mobile numbers (OTP is printed by the API):\n")
     print("  Retailer app    %s   Sharma Mobiles" % RETAILER_MOBILE)
+    print("  Retailer app    %s   Verma Telecom" % RETAILER2_MOBILE)
     print("  Customer app    %s   Ramesh Kumar (has a live finance)" % CUSTOMER_MOBILE)
     print("  Customer app    %s   Sunita Devi (no finance yet)" % CUSTOMER2_MOBILE)
-    print("  Distributor     %s   North Distributor" % DISTRIBUTOR_MOBILE)
-    print("  Super Admin     %s   Ashish Enterprises" % ADMIN_MOBILE)
+    print("  Distributor app %s   North Distributor" % DISTRIBUTOR_MOBILE)
+    print("  Admin panel     %s   Ashish Enterprises (web)" % ADMIN_MOBILE)
     print("\nSeeded finance %s: %s financed over 11 months, EMI %s" % (
         result["finance_id"], format_inr(result["principal"]),
         format_inr(result["emi_amount"])))
-    print("Spare IMEI for a new finance in the Retailer app: %s" % DEMO_IMEI_2)
+    print("Spare IMEIs for new finances: %s, %s" % (DEMO_IMEI_2, SPARE_IMEI))
     conn.close()
 
 

@@ -12,6 +12,8 @@ dependencies:
   http: ^1.2.2
   shared_preferences: ^2.3.2
   intl: ^0.20.2
+  # Only here to satisfy Flutter's default font manifest on web builds.
+  cupertino_icons: ^1.0.8
 
 dev_dependencies:
   flutter_test:
@@ -20,3 +22,15 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+
+  # Roboto is bundled rather than fetched from fonts.gstatic.com at runtime.
+  # Without it the web build renders every label invisibly on a machine that
+  # cannot reach Google's font CDN. Apache 2.0, licence text alongside.
+  fonts:
+    - family: Roboto
+      fonts:
+        - asset: assets/fonts/Roboto-Regular.ttf
+        - asset: assets/fonts/Roboto-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Roboto-Bold.ttf
+          weight: 700

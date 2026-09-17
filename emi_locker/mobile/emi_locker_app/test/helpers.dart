@@ -22,6 +22,24 @@ class FakeApi {
   final List<Map<String, dynamic>> bodies = [];
   final List<Map<String, String>> headers = [];
 
+  /// The body of the first request matching `METHOD /path`.
+  ///
+  /// Screens usually reload after a write, so `bodies.last` is the follow-up
+  /// GET rather than the write you meant to inspect.
+  Map<String, dynamic> bodyFor(String call) => bodies[_indexOf(call)];
+
+  Map<String, String> headersFor(String call) => headers[_indexOf(call)];
+
+  int countOf(String call) => calls.where((c) => c == call).length;
+
+  int _indexOf(String call) {
+    final index = calls.indexOf(call);
+    if (index < 0) {
+      throw StateError('no request matched "\$call"; saw: \$calls');
+    }
+    return index;
+  }
+
   http.Client get client => MockClient((request) async {
         final key = '${request.method} ${request.url.path}';
         calls.add(key);
@@ -62,14 +80,26 @@ void useTallSurface(WidgetTester tester) {
   addTearDown(tester.view.resetDevicePixelRatio);
 }
 
+/// A desktop-browser-sized surface, for the admin panel.
+///
+/// Above AdaptiveNavScaffold's 900dp breakpoint, so the side rail is exercised
+/// rather than the drawer.
+void useDesktopSurface(WidgetTester tester) {
+  tester.view.physicalSize = const Size(1440, 2600);
+  tester.view.devicePixelRatio = 1.0;
+  addTearDown(tester.view.resetPhysicalSize);
+  addTearDown(tester.view.resetDevicePixelRatio);
+}
+
 /// Pumps a screen with a signed-in session above it.
 Future<Session> pumpSignedIn(
   WidgetTester tester,
   FakeApi fake,
   Map<String, dynamic> user,
-  Widget child,
-) async {
-  useTallSurface(tester);
+  Widget child, {
+  bool desktop = false,
+}) async {
+  desktop ? useDesktopSurface(tester) : useTallSurface(tester);
   SharedPreferences.setMockInitialValues({});
   final api = ApiClient(baseUrl: 'http://test.local', httpClient: fake.client);
   api.token = 'test-token';
@@ -104,6 +134,20 @@ const retailerUser = {
   'name': 'Sharma Mobiles',
   'mobile': '9000000003',
   'retailer_id': 'USR-0000003',
+};
+
+const distributorUser = {
+  'id': 'USR-0000002',
+  'role': 'DISTRIBUTOR',
+  'name': 'North Distributor',
+  'mobile': '9000000002',
+};
+
+const adminUser = {
+  'id': 'USR-0000001',
+  'role': 'SUPER_ADMIN',
+  'name': 'Ashish Enterprises',
+  'mobile': '9000000001',
 };
 
 const customerUser = {

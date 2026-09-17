@@ -3,21 +3,27 @@ import 'package:flutter/material.dart';
 import 'core/api_client.dart';
 import 'core/session.dart';
 import 'core/theme.dart';
+import 'features/admin/admin_shell.dart';
 import 'features/auth/login_screen.dart';
 import 'features/customer/customer_shell.dart';
+import 'features/distributor/distributor_shell.dart';
 import 'features/retailer/retailer_shell.dart';
 
 void main() {
   runApp(EmiLockerApp(api: ApiClient()));
 }
 
-/// One app, two audiences.
+/// One codebase, four audiences.
 ///
 /// The role that comes back from sign-in decides which shell you land in:
-/// a retailer never sees the customer screens and vice versa. For production
-/// these become two Play listings - the feature folders are already separate,
-/// so splitting them is moving `features/customer` and `features/retailer`
-/// into two projects that share `core/`.
+/// customer, retailer, distributor, or the Super Admin panel. Nobody sees
+/// another role's screens, and the backend enforces that independently - the
+/// routing here is convenience, not security.
+///
+/// The admin panel is meant for a browser (`flutter run -d chrome`), the three
+/// others for Android. For release these become separate Play listings and a
+/// hosted web build; the feature folders are already split along those lines,
+/// so it is a move rather than a rewrite.
 class EmiLockerApp extends StatefulWidget {
   const EmiLockerApp({super.key, required this.api});
 
@@ -66,6 +72,12 @@ class _EmiLockerAppState extends State<EmiLockerApp> {
             if (_session.isCustomer) {
               return const CustomerShell();
             }
+            if (_session.isDistributor) {
+              return const DistributorShell();
+            }
+            if (_session.isAdmin) {
+              return const AdminShell();
+            }
             return _UnsupportedRole(session: _session);
           },
         ),
@@ -108,8 +120,7 @@ class _UnsupportedRole extends StatelessWidget {
               const Icon(Icons.info_outline, size: 48),
               const SizedBox(height: 16),
               Text(
-                'The ${session.role} role is managed from the admin web panel, '
-                'not from this app.',
+                'There is no screen for the ${session.role} role yet.',
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 24),

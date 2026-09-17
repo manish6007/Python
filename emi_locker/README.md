@@ -1,8 +1,8 @@
 # EMI Locker
 
 A working local build of the Ashish Enterprises EMI Locker platform: a Python
-backend and a Flutter Android app covering both the **Customer** and
-**Retailer** sides, on top of a tested domain core.
+backend, three Android apps (**Customer**, **Retailer**, **Distributor**) and a
+**Super Admin web panel**, on top of a tested domain core.
 
 **New here? Go straight to [docs/WINDOWS_SETUP.md](docs/WINDOWS_SETUP.md).**
 It takes you from a clean Windows PC to both apps running, and ends with a
@@ -17,10 +17,14 @@ built, including the parts that are not a coding job at all.
 emi_locker/
   emi_locker/      domain core - licensing, finance, EMI, payments, devices
   backend/         FastAPI app: OTP login, REST API, mock gateway, seed data
-  mobile/          Flutter app: Customer + Retailer
+  mobile/          Flutter: customer, retailer, distributor and admin panel
   docs/            setup guide
   start-backend.bat / start-backend.sh
 ```
+
+One Flutter project serves all four audiences. The role returned at sign-in
+decides which shell opens, and the backend enforces the boundaries
+independently - the routing is convenience, not security.
 
 ## Quick start
 
@@ -33,18 +37,25 @@ Then, in a second terminal:
 ```bash
 cd mobile/emi_locker_app
 flutter pub get
-flutter run
+flutter run              # Android: customer, retailer, distributor
+flutter run -d chrome    # the Super Admin panel
 ```
 
-Sign in with `9000000003` (retailer) or `9876543210` (customer). The OTP is
-printed by the backend and filled in for you - local mode returns it instead
-of sending an SMS.
+Sign in with one of the seeded numbers - the OTP is printed by the backend and
+filled in for you, because local mode returns it instead of sending an SMS:
+
+| Number | Opens |
+|---|---|
+| `9876543210` | Customer app (has a live finance) |
+| `9000000003` | Retailer app |
+| `9000000002` | Distributor app |
+| `9000000001` | Super Admin panel (use Chrome) |
 
 ## Tests
 
 ```bash
-python -m pytest tests backend/tests -q      # 106: domain core + API
-cd mobile/emi_locker_app && flutter test     # 36: app
+python -m pytest tests backend/tests -q      # 132: domain core + API
+cd mobile/emi_locker_app && flutter test     # 54: apps and panel
 ```
 
 There is also a dependency-free walkthrough of the domain core on its own,
@@ -88,7 +99,8 @@ are covered by the core's own tests and cannot drift between transports.
 | `payments.py` | Payment initiation, webhook verification, receipts, cash collection |
 | `lifecycle.py` | Due/grace/overdue sweep, reminders, closure certificate |
 | `devices.py` | Device command queue, eligibility, dual control, provider adapter |
-| `reports.py` | Scoped dashboards and reports |
+| `reports.py` | Scoped dashboards, reports and commission |
+| `settings_store.py` | Admin-configurable business settings |
 
 ## Design decisions worth keeping
 
@@ -110,9 +122,10 @@ are covered by the core's own tests and cannot drift between transports.
 ## Not built yet
 
 Deliberately out of scope for a local build: KYC document storage,
-SMS/WhatsApp/push delivery, commission calculation, the Distributor app, the
-Super Admin web panel, and any real device-management integration. Payments run
-against a local mock gateway rather than a real one.
+SMS/WhatsApp/push delivery, and any real device-management integration.
+Payments run against a local mock gateway rather than a real one. Commission
+rates default to zero and are set in the admin panel - the blueprint fixes no
+rate, so neither does this.
 
 See [FEASIBILITY.md](FEASIBILITY.md) §4 for the order these come in, and §3 for
 the parts that depend on a contract or a lawyer rather than on code.

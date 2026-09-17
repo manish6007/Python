@@ -35,8 +35,18 @@ class AsyncViewState<T> extends State<AsyncView<T>> {
   }
 
   Future<void> reload() async {
-    setState(() => _future = widget.load());
-    await _future.catchError((Object _) => null as T);
+    // A block body, not an arrow: `setState(() => _future = ...)` returns the
+    // assigned Future, and Flutter asserts that a setState callback returns
+    // nothing. That assertion fires on every reload-after-an-action path.
+    setState(() {
+      _future = widget.load();
+    });
+    try {
+      await _future;
+    } catch (_) {
+      // FutureBuilder renders the error. Awaiting here only exists so that
+      // RefreshIndicator's spinner stops at the right moment.
+    }
     widget.onRetryDone?.call();
   }
 

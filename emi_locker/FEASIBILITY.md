@@ -55,8 +55,34 @@ point of writing them first:
    now *returns* a `REJECTED` result for well-formed events it refuses, so the
    refusal and its audit trail commit together.
 
-Both were design errors in the sort of code that looks obviously correct on a
-whiteboard. That is the argument for building this core first.
+A later review of the money path found six more, all reproduced against the
+running API before being fixed, all now pinned by tests in
+`backend/tests/test_payment_integrity.py`:
+
+3. **A customer could clear a ₹2,000 instalment by paying ₹1.** The webhook
+   checked that the gateway paid what we *asked for*, but nothing checked that
+   what we asked for matched the instalment. The cash path had that check; the
+   online path never did.
+4. **Quoting another account's instalment id marked that instalment paid.**
+   The id was never checked against the finance being paid, so money recorded
+   against one account credited a different one.
+5. **A restriction was never lifted by payment.** `restore_on_payment` existed
+   and was called only by the demo script, so the production path could
+   restrict a device and never release it — while the customer app promised
+   that clearing the arrears would.
+6. **Quota an admin allocated could never be spent.** The wallet showed a
+   balance and every activation against it was refused, because nothing backed
+   it.
+7. **Two accounts using the same idempotency key collided.** The key was
+   global, so the second caller received the first one's finance record and
+   schedule, and their own request was silently never performed.
+8. **System-raised device commands violated a foreign key**, because they
+   wrote the string `"SYSTEM"` into a column referencing `users`.
+
+Both sets were design errors in the sort of code that looks obviously correct
+on a whiteboard. That is the argument for building this core first — and for
+reviewing the money path separately from the happy path, because every one of
+these passed the happy-path tests.
 
 ---
 

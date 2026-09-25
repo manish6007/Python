@@ -239,7 +239,7 @@ def allocate_quota(
     if quota <= 0:
         raise ValidationError("quota must be positive")
 
-    cached = replay_idempotent(conn, "license.allocate", idempotency_key)
+    cached = replay_idempotent(conn, "license.allocate", actor, idempotency_key)
     if cached is not None:
         return cached
 
@@ -257,8 +257,15 @@ def allocate_quota(
         backing = _load_license_for_use(conn, license_id)
     else:
         backing = effective_license(conn, actor.user_id)
-    if backing is None and not actor.is_admin:
-        raise LicenseInvalid("no active, unexpired license backs %s" % actor.user_id)
+    if backing is None:
+        # Admins used to be exempt here, which minted quota that no retailer
+        # could ever spend: the wallet showed a balance, and every activation
+        # was then refused because nothing backed it. To grant quota directly,
+        # issue a licence to the retailer instead - that credits the wallet
+        # and gives it an expiry.
+        raise LicenseInvalid(
+            "no active, unexpired licence backs %s, so any quota allocated from"
+            " it could not be used. Issue a licence first." % actor.user_id)
 
     if not actor.is_admin:
         # Decrement the distributor's own balance under the write lock.
@@ -293,7 +300,7 @@ def allocate_quota(
         "wallet": wallet(conn, to_owner),
     }
     if idempotency_key:
-        remember_idempotent(conn, "license.allocate", idempotency_key, result)
+        remember_idempotent(conn, "license.allocate", actor, idempotency_key, result)
     return result
 
 
@@ -313,7 +320,7 @@ def consume_activation(
     write lock, so two racing retailer requests cannot both see the last
     unit. ``rowcount == 0`` means somebody else took it.
     """
-    cached = replay_idempotent(conn, "license.activate", idempotency_key)
+    cached = replay_idempotent(conn, "license.activate", actor, idempotency_key)
     if cached is not None:
         return cached
 
@@ -349,7 +356,7 @@ def consume_activation(
         "wallet": wallet(conn, owner_id),
     }
     if idempotency_key:
-        remember_idempotent(conn, "license.activate", idempotency_key, result)
+        remember_idempotent(conn, "license.activate", actor, idempotency_key, result)
     return result
 
 

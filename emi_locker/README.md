@@ -54,7 +54,7 @@ filled in for you, because local mode returns it instead of sending an SMS:
 ## Tests
 
 ```bash
-python -m pytest tests backend/tests -q      # 132: domain core + API
+python -m pytest tests backend/tests -q      # 144: domain core + API
 cd mobile/emi_locker_app && flutter test     # 54: apps and panel
 ```
 

@@ -283,7 +283,10 @@ CREATE TABLE IF NOT EXISTS device_commands (
     command       TEXT NOT NULL CHECK (command IN
                    ('ENROLL','REMIND','RESTRICT','RESTORE','RELEASE')),
     reason        TEXT NOT NULL,
-    requested_by  TEXT NOT NULL REFERENCES users(id),
+    -- Nullable: the system raises commands of its own (a restore after the
+    -- last payment clears the arrears), and those have no user behind them.
+    -- Storing a sentinel string here instead violates the foreign key.
+    requested_by  TEXT REFERENCES users(id),
     approved_by   TEXT REFERENCES users(id),
     status        TEXT NOT NULL CHECK (status IN
                    ('PENDING_APPROVAL','APPROVED','SENT','ACKED','FAILED','REJECTED')),

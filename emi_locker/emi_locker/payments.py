@@ -49,6 +49,52 @@ def _next_unpaid_emi(conn: sqlite3.Connection, finance_id: str) -> Optional[sqli
     ).fetchone()
 
 
+def resolve_payable_emi(
+    conn: sqlite3.Connection,
+    finance_id: str,
+    emi_id: Optional[str],
+    amount_paise: int,
+) -> sqlite3.Row:
+    """The one place that decides which instalment a payment may settle.
+
+    Three checks, all of which were missing on the online path and all of
+    which are exploitable without them:
+
+    * the instalment must belong to *this* finance - otherwise a caller can
+      quote any instalment id and have someone else's EMI marked paid;
+    * it must still be outstanding - otherwise a paid instalment can be
+      charged for twice;
+    * the amount must equal the instalment exactly - otherwise a customer can
+      send a rupee and have a full instalment cleared.
+
+    Part payments are refused rather than quietly accepted. Accepting one
+    would need a business decision about how it is applied, and guessing is
+    how ledgers stop reconciling.
+    """
+    if emi_id is None:
+        emi = _next_unpaid_emi(conn, finance_id)
+        if emi is None:
+            raise ValidationError("finance %s has no unpaid instalment" % finance_id)
+    else:
+        emi = conn.execute(
+            "SELECT * FROM emi_schedules WHERE id = ?", (emi_id,)
+        ).fetchone()
+        if emi is None:
+            raise NotFound("emi %s" % emi_id)
+        if emi["finance_id"] != finance_id:
+            raise ValidationError(
+                "instalment %s does not belong to finance %s" % (emi_id, finance_id))
+        if emi["status"] in ("PAID", "WAIVED"):
+            raise ValidationError("instalment %s is already %s"
+                                  % (emi_id, emi["status"].lower()))
+
+    if amount_paise != emi["amount_paise"]:
+        raise ValidationError(
+            "payment must be for the full instalment of %d paise, not %d"
+            % (emi["amount_paise"], amount_paise))
+    return emi
+
+
 def initiate_payment(
     conn: sqlite3.Connection,
     actor: Actor,
@@ -63,11 +109,7 @@ def initiate_payment(
         raise NotFound("finance %s" % finance_id)
     if amount_paise <= 0:
         raise ValidationError("amount must be positive")
-    if emi_id is None:
-        emi = _next_unpaid_emi(conn, finance_id)
-        if emi is None:
-            raise ValidationError("finance %s has no unpaid instalment" % finance_id)
-        emi_id = emi["id"]
+    emi_id = resolve_payable_emi(conn, finance_id, emi_id, amount_paise)["id"]
 
     pay_id = next_id(conn, "payment")
     conn.execute(
@@ -104,6 +146,18 @@ def _apply_success(
 
     emi_id = payment["emi_id"]
     if emi_id:
+        # Re-check at the moment of applying, not just when the payment was
+        # created: a payment row can sit in INITIATED for a long time, and the
+        # instalment it names may have been paid or re-priced meanwhile.
+        emi = conn.execute("SELECT * FROM emi_schedules WHERE id = ?", (emi_id,)).fetchone()
+        if emi is None or emi["finance_id"] != payment["finance_id"]:
+            raise ValidationError(
+                "payment %s names an instalment that is not on its finance account"
+                % payment["id"])
+        if emi["amount_paise"] != payment["amount_paise"]:
+            raise ValidationError(
+                "payment %s is %d paise but instalment %s is %d"
+                % (payment["id"], payment["amount_paise"], emi_id, emi["amount_paise"]))
         conn.execute(
             "UPDATE emi_schedules SET status = 'PAID', paid_at = ? WHERE id = ?",
             (now(), emi_id),
@@ -117,9 +171,19 @@ def _apply_success(
     )
 
     finance_id = payment["finance_id"]
-    from .lifecycle import settle_finance_if_complete  # local import: avoids a cycle
+    # Local imports: payments <-> lifecycle <-> devices would otherwise cycle.
+    from .devices import restore_on_payment
+    from .lifecycle import settle_finance_if_complete
 
     completion = settle_finance_if_complete(conn, actor, finance_id)
+
+    # Blueprint section 14: a successful payment re-checks the outstanding
+    # balance and lifts a restriction if nothing is overdue. This raises and
+    # auto-approves the RESTORE command; whether it actually reaches the
+    # handset depends on a device-management provider being configured, and
+    # with none configured the attempt is recorded as FAILED rather than
+    # pretended to have worked.
+    restored = restore_on_payment(conn, actor, finance_id)
     audit(conn, actor, "payment.success", "payment_transaction", payment["id"],
           after={"emi_id": emi_id, "receipt": number, "gateway_txn_id": gateway_txn_id})
     return {
@@ -130,6 +194,7 @@ def _apply_success(
         "receipt_number": number,
         "finance_completed": completion["completed"],
         "outstanding": completion["outstanding"],
+        "device_restore": restored,
     }
 
 
@@ -224,7 +289,7 @@ def record_cash_collection(
     actor.require_role("SUPER_ADMIN", "DISTRIBUTOR", "RETAILER", "STAFF")
     from .core import replay_idempotent, remember_idempotent
 
-    cached = replay_idempotent(conn, "collection.record", idempotency_key)
+    cached = replay_idempotent(conn, "collection.record", actor, idempotency_key)
     if cached is not None:
         return cached
 
@@ -233,20 +298,7 @@ def record_cash_collection(
         raise NotFound("finance %s" % finance_id)
     assert_can_touch_retailer(conn, actor, fin["retailer_id"])
 
-    if emi_id is None:
-        emi = _next_unpaid_emi(conn, finance_id)
-        if emi is None:
-            raise ValidationError("finance %s has no unpaid instalment" % finance_id)
-        emi_id = emi["id"]
-    emi_row = conn.execute("SELECT * FROM emi_schedules WHERE id = ?", (emi_id,)).fetchone()
-    if emi_row is None:
-        raise NotFound("emi %s" % emi_id)
-    if emi_row["status"] == "PAID":
-        raise ValidationError("instalment %s is already paid" % emi_id)
-    if amount_paise != emi_row["amount_paise"]:
-        raise ValidationError(
-            "cash collection must match the instalment amount (%s)" % emi_row["amount_paise"]
-        )
+    emi_id = resolve_payable_emi(conn, finance_id, emi_id, amount_paise)["id"]
 
     pay_id = next_id(conn, "payment")
     conn.execute(
@@ -269,7 +321,7 @@ def record_cash_collection(
           after={"finance_id": finance_id, "emi_id": emi_id, "amount_paise": amount_paise})
     applied["collection_id"] = col_id
     if idempotency_key:
-        remember_idempotent(conn, "collection.record", idempotency_key, applied)
+        remember_idempotent(conn, "collection.record", actor, idempotency_key, applied)
     return applied
 
 

@@ -123,22 +123,41 @@ def audit(
     )
 
 
+def _idempotency_scope(scope: str, actor: Optional[Actor]) -> str:
+    """Namespace a client-chosen key to the account that chose it.
+
+    Without the actor in here, two accounts picking the same key collide: the
+    second caller is handed the first one's stored result - another tenant's
+    finance record, schedule and wallet - and their own request is never
+    performed, while their app reports success.
+    """
+    return "%s:%s" % (scope, actor.user_id if actor else "-")
+
+
 def remember_idempotent(
-    conn: sqlite3.Connection, scope: str, key: str, result: Dict[str, Any]
+    conn: sqlite3.Connection,
+    scope: str,
+    actor: Optional[Actor],
+    key: str,
+    result: Dict[str, Any],
 ) -> None:
     conn.execute(
         "INSERT INTO idempotency_keys(scope, key, result_json, created_at) VALUES (?,?,?,?)",
-        (scope, key, json.dumps(result), now()),
+        (_idempotency_scope(scope, actor), key, json.dumps(result), now()),
     )
 
 
 def replay_idempotent(
-    conn: sqlite3.Connection, scope: str, key: Optional[str]
+    conn: sqlite3.Connection,
+    scope: str,
+    actor: Optional[Actor],
+    key: Optional[str],
 ) -> Optional[Dict[str, Any]]:
     if not key:
         return None
     row = conn.execute(
-        "SELECT result_json FROM idempotency_keys WHERE scope = ? AND key = ?", (scope, key)
+        "SELECT result_json FROM idempotency_keys WHERE scope = ? AND key = ?",
+        (_idempotency_scope(scope, actor), key),
     ).fetchone()
     return json.loads(row["result_json"]) if row else None
 

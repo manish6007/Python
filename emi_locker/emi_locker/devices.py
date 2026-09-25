@@ -106,7 +106,7 @@ def request_command(
         "INSERT INTO device_commands(id, device_id, command, reason, requested_by, approved_by,"
         " status, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
         (cmd_id, device_id, command, reason,
-         actor.user_id if actor else "SYSTEM",
+         actor.user_id if actor else None,
          actor.user_id if (auto_approve and actor) else None,
          status, now(), now()),
     )
@@ -126,8 +126,9 @@ def approve_command(conn: sqlite3.Connection, actor: Actor, command_id: str) -> 
         raise NotFound("command %s" % command_id)
     if cmd["status"] != "PENDING_APPROVAL":
         raise ValidationError("command %s is %s" % (command_id, cmd["status"]))
-    if cmd["requested_by"] == actor.user_id:
-        raise PermissionDenied("a restriction must be approved by someone other than its requester")
+    if cmd["requested_by"] is not None and cmd["requested_by"] == actor.user_id:
+        raise PermissionDenied(
+            "a restriction must be approved by someone other than its requester")
     conn.execute(
         "UPDATE device_commands SET status = 'APPROVED', approved_by = ?, updated_at = ?"
         " WHERE id = ?",

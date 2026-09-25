@@ -59,21 +59,29 @@ def send_otp(conn: sqlite3.Connection, mobile: str) -> Dict[str, Any]:
         "SELECT id, role, name, status FROM users WHERE mobile = ?", (mobile,)
     ).fetchone()
 
+    # An unknown number gets the same answer as a known one. Otherwise this
+    # endpoint tells anyone who asks which mobiles have accounts.
+    if user is None or user["status"] != "ACTIVE":
+        return {"sent": True, "mobile": mobile}
+
     existing = conn.execute(
         "SELECT last_sent_at FROM auth_otps WHERE mobile = ?", (mobile,)
     ).fetchone()
     if existing:
         last = _dt.datetime.fromisoformat(existing["last_sent_at"])
         waited = (_utc_now() - last).total_seconds()
-        if waited < RESEND_COOLDOWN_SEC:
-            raise ValidationError(
-                "please wait %d seconds before requesting another code"
-                % int(RESEND_COOLDOWN_SEC - waited))
-
-    # An unknown number gets the same answer as a known one. Otherwise this
-    # endpoint tells anyone who asks which mobiles have accounts.
-    if user is None or user["status"] != "ACTIVE":
-        return {"sent": True, "mobile": mobile}
+        if waited < RESEND_COOLDOWN_SEC and not settings.expose_otp:
+            # Silently decline to issue a new code rather than reporting the
+            # cooldown. Reporting it only happens for numbers that have an
+            # account, which turned this endpoint into an account-existence
+            # oracle. The code already sent stays valid.
+            #
+            # Local mode reissues instead, because it hands the code back in
+            # the response anyway - so there is nothing here left to leak, and
+            # being locked out for 30 seconds while switching between roles
+            # makes testing miserable. config.validate() refuses to start in
+            # production with that mode on.
+            return {"sent": True, "mobile": mobile}
 
     code = "".join(secrets.choice("0123456789") for _ in range(OTP_LENGTH))
     expires = _utc_now() + _dt.timedelta(seconds=settings.otp_ttl_seconds)

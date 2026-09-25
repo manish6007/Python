@@ -168,7 +168,7 @@ def create_finance(
     """
     actor.require_role("SUPER_ADMIN", "DISTRIBUTOR", "RETAILER", "STAFF")
 
-    cached = replay_idempotent(conn, "finance.create", idempotency_key)
+    cached = replay_idempotent(conn, "finance.create", actor, idempotency_key)
     if cached is not None:
         return cached
 
@@ -274,7 +274,7 @@ def create_finance(
         ],
     }
     if idempotency_key:
-        remember_idempotent(conn, "finance.create", idempotency_key, result)
+        remember_idempotent(conn, "finance.create", actor, idempotency_key, result)
     return result
 
 

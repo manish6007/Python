@@ -15,6 +15,13 @@ from typing import List
 DEV_JWT_SECRET = "dev-only-jwt-secret-change-me"
 DEV_WEBHOOK_SECRET = "dev-only-webhook-secret-change-me"
 
+# Kept here rather than imported from notifications, so that importing config
+# never drags in an HTTP client.
+DEFAULT_OTP_TEMPLATE = (
+    "{code} is your {business} verification code. It is valid for {minutes} "
+    "minutes. Do not share it with anyone."
+)
+
 
 @dataclass
 class Settings:
@@ -32,6 +39,31 @@ class Settings:
         default_factory=lambda: int(os.getenv("EMI_OTP_MAX_ATTEMPTS", "5")))
     cors_origins: List[str] = field(
         default_factory=lambda: os.getenv("EMI_CORS", "*").split(","))
+
+    # --- how a one-time code reaches the customer -------------------------
+    otp_channel: str = field(
+        default_factory=lambda: os.getenv("EMI_OTP_CHANNEL", "console"))
+    otp_template: str = field(
+        default_factory=lambda: os.getenv("EMI_OTP_TEMPLATE", "") or DEFAULT_OTP_TEMPLATE)
+    business_name: str = field(
+        default_factory=lambda: os.getenv("EMI_BUSINESS_NAME", "EMI Locker"))
+    country_code: str = field(
+        default_factory=lambda: os.getenv("EMI_COUNTRY_CODE", "91"))
+
+    # Evolution Go (unofficial WhatsApp gateway)
+    wa_url: str = field(default_factory=lambda: os.getenv("EMI_WA_URL", ""))
+    wa_instance: str = field(default_factory=lambda: os.getenv("EMI_WA_INSTANCE", ""))
+    wa_api_key: str = field(default_factory=lambda: os.getenv("EMI_WA_API_KEY", ""))
+
+    # Generic JSON provider (SMS aggregator or licensed WhatsApp BSP)
+    otp_http_url: str = field(default_factory=lambda: os.getenv("EMI_OTP_HTTP_URL", ""))
+    otp_http_key: str = field(default_factory=lambda: os.getenv("EMI_OTP_HTTP_KEY", ""))
+    otp_http_auth_header: str = field(
+        default_factory=lambda: os.getenv("EMI_OTP_HTTP_AUTH_HEADER", "Authorization"))
+    otp_http_to_field: str = field(
+        default_factory=lambda: os.getenv("EMI_OTP_HTTP_TO_FIELD", "to"))
+    otp_http_body_field: str = field(
+        default_factory=lambda: os.getenv("EMI_OTP_HTTP_BODY_FIELD", "message"))
 
     @property
     def is_local(self) -> bool:
@@ -58,6 +90,17 @@ class Settings:
             problems.append("EMI_EXPOSE_OTP must be 0 in production")
         if "*" in self.cors_origins:
             problems.append("EMI_CORS must list real origins in production")
+        if self.otp_channel == "console":
+            problems.append(
+                "EMI_OTP_CHANNEL is still 'console', which only prints codes to"
+                " the server log - nobody would receive one")
+        if self.otp_channel == "evolution" and not (
+                self.wa_url and self.wa_instance and self.wa_api_key):
+            problems.append(
+                "EMI_OTP_CHANNEL=evolution needs EMI_WA_URL, EMI_WA_INSTANCE"
+                " and EMI_WA_API_KEY")
+        if self.otp_channel == "http" and not self.otp_http_url:
+            problems.append("EMI_OTP_CHANNEL=http needs EMI_OTP_HTTP_URL")
         if problems:
             raise RuntimeError(
                 "refusing to start in production mode:\n  - " + "\n  - ".join(problems))

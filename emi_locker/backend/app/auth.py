@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import hashlib
+import logging
 import hmac
 import secrets
 import sqlite3
@@ -30,6 +31,30 @@ from emi_locker.core import Actor
 from emi_locker.errors import PermissionDenied, ValidationError
 
 from .config import settings
+from .notifications import build_channel
+
+log = logging.getLogger("emi.auth")
+
+_channel = None
+
+
+def channel():
+    """Built once, lazily, so configuration is read after the app starts."""
+    global _channel
+    if _channel is None:
+        _channel = build_channel(settings)
+    return _channel
+
+
+def reset_channel() -> None:
+    """Forget the cached channel. Used by tests that swap configuration."""
+    global _channel
+    _channel = None
+
+
+def _masked(mobile: str) -> str:
+    return "%s****%s" % (mobile[:2], mobile[-2:]) if len(mobile) >= 4 else "****"
+
 
 OTP_LENGTH = 6
 RESEND_COOLDOWN_SEC = 30
@@ -93,8 +118,16 @@ def send_otp(conn: sqlite3.Connection, mobile: str) -> Dict[str, Any]:
         " last_sent_at = excluded.last_sent_at",
         (mobile, _hash_code(mobile, code), expires.isoformat(), _utc_now().isoformat()),
     )
-    # Stands in for the SMS/WhatsApp provider until one is contracted.
-    print("[OTP] %s -> %s (valid %ds)" % (mobile, code, settings.otp_ttl_seconds), flush=True)
+    try:
+        channel().send_otp(mobile, code, settings.otp_ttl_seconds)
+    except Exception as exc:
+        # Deliberately swallowed. A delivery failure can only happen for a
+        # number that has an account, so reporting it would tell an attacker
+        # which numbers those are. The failure is logged loudly instead, and
+        # the customer simply asks for another code.
+        log.error("OTP delivery failed via %s for %s: %s",
+                  settings.otp_channel, _masked(mobile), exc)
+
     out: Dict[str, Any] = {"sent": True, "mobile": mobile}
     if settings.expose_otp:
         out["dev_otp"] = code

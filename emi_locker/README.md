@@ -18,7 +18,7 @@ emi_locker/
   emi_locker/      domain core - licensing, finance, EMI, payments, devices
   backend/         FastAPI app: OTP login, REST API, mock gateway, seed data
   mobile/          Flutter: customer, retailer, distributor and admin panel
-  docs/            setup guide
+  docs/            setup guide, OTP delivery
   start-backend.bat / start-backend.sh
 ```
 
@@ -54,7 +54,7 @@ filled in for you, because local mode returns it instead of sending an SMS:
 ## Tests
 
 ```bash
-python -m pytest tests backend/tests -q      # 144: domain core + API
+python -m pytest tests backend/tests -q      # 158: domain core + API
 cd mobile/emi_locker_app && flutter test     # 54: apps and panel
 ```
 

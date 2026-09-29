@@ -339,7 +339,9 @@ and run the app with
 So you are not surprised:
 
 - **OTPs are not sent by SMS.** Local mode returns the code in the response and
-  prints it in the backend window. Wiring a real SMS provider is a later step.
+  prints it in the backend window. To wire a real WhatsApp or SMS provider, see
+  [OTP_DELIVERY.md](OTP_DELIVERY.md) - it is one environment variable, plus a
+  warning worth reading about unofficial WhatsApp gateways.
 - **Payments do not move money.** The "gateway" is a local stand-in. It is
   built to be honest about the *flow* — it signs a callback with the real
   webhook secret and the backend verifies it, exactly as a production gateway

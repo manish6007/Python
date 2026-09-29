@@ -36,6 +36,11 @@ CREATE TABLE IF NOT EXISTS users (
     parent_id   TEXT REFERENCES users(id),
     status      TEXT NOT NULL DEFAULT 'ACTIVE'
                  CHECK (status IN ('PENDING','ACTIVE','SUSPENDED')),
+    -- Bumped to invalidate every token already issued to this account.
+    -- Sessions are long, so there has to be a way to end them all at once:
+    -- a lost handset, or a suspension that must not be undone by simply
+    -- reactivating the account later.
+    session_epoch INTEGER NOT NULL DEFAULT 0,
     created_at  TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_users_parent ON users(parent_id);
@@ -335,8 +340,24 @@ def connect(path: str = ":memory:", same_thread: bool = True) -> sqlite3.Connect
     return conn
 
 
+# Columns added after the first release. Applied to existing databases on
+# open, because CREATE TABLE IF NOT EXISTS silently leaves them behind.
+ADDITIVE_MIGRATIONS = (
+    ("users", "session_epoch", "INTEGER NOT NULL DEFAULT 0"),
+)
+
+
+def migrate(conn: sqlite3.Connection) -> None:
+    """Add any column a newer release introduced. Safe to run every time."""
+    for table, column, definition in ADDITIVE_MIGRATIONS:
+        existing = {row[1] for row in conn.execute("PRAGMA table_info(%s)" % table)}
+        if column not in existing:
+            conn.execute("ALTER TABLE %s ADD COLUMN %s %s" % (table, column, definition))
+
+
 def init_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
+    migrate(conn)
 
 
 def open_db(path: str = ":memory:", same_thread: bool = True) -> sqlite3.Connection:
@@ -378,4 +399,6 @@ def file_db(path: str, same_thread: bool = True) -> sqlite3.Connection:
     conn = connect(path, same_thread=same_thread)
     if fresh:
         init_schema(conn)
+    else:
+        migrate(conn)
     return conn

@@ -160,18 +160,26 @@ def verify_otp(conn: sqlite3.Connection, mobile: str, code: str) -> Dict[str, An
     if user is None or user["status"] != "ACTIVE":
         raise PermissionDenied("this account is not active")
 
+    epoch = conn.execute(
+        "SELECT session_epoch FROM users WHERE id = ?", (user["id"],)).fetchone()
     return {
-        "token": issue_token(user["id"], user["role"]),
+        "token": issue_token(user["id"], user["role"],
+                             epoch["session_epoch"] if epoch else 0),
         "user": profile_for(conn, user["id"]),
+        "session_minutes": settings.session_minutes_for(user["role"]),
     }
 
 
-def issue_token(user_id: str, role: str) -> str:
+def issue_token(user_id: str, role: str, session_epoch: int = 0) -> str:
+    minutes = settings.session_minutes_for(role)
     payload = {
         "sub": user_id,
         "role": role,
+        # Carried so a session can be ended before it expires. Sessions are
+        # long now, so "wait for it to lapse" is not a revocation story.
+        "epoch": session_epoch,
         "iat": int(_utc_now().timestamp()),
-        "exp": int((_utc_now() + _dt.timedelta(minutes=settings.token_ttl_minutes)).timestamp()),
+        "exp": int((_utc_now() + _dt.timedelta(minutes=minutes)).timestamp()),
     }
     return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
 
@@ -183,9 +191,16 @@ def actor_from_token(conn: sqlite3.Connection, token: str) -> Actor:
         raise PermissionDenied("session expired, please sign in again")
     except jwt.InvalidTokenError:
         raise PermissionDenied("invalid session token")
+
     # Reload from the database: a token issued before a suspension must not
     # keep working just because it has not expired yet.
-    return Actor.load(conn, payload["sub"])
+    actor = Actor.load(conn, payload["sub"])
+
+    row = conn.execute(
+        "SELECT session_epoch FROM users WHERE id = ?", (payload["sub"],)).fetchone()
+    if row is not None and payload.get("epoch", 0) != row["session_epoch"]:
+        raise PermissionDenied("this session was ended, please sign in again")
+    return actor
 
 
 def profile_for(conn: sqlite3.Connection, user_id: str) -> Dict[str, Any]:
@@ -211,3 +226,16 @@ def resolve_customer_id(conn: sqlite3.Connection, actor: Actor) -> Optional[str]
         "SELECT id FROM customers WHERE user_id = ?", (actor.user_id,)
     ).fetchone()
     return row["id"] if row else None
+
+
+def end_all_sessions(conn: sqlite3.Connection, user_id: str) -> int:
+    """Invalidate every token already issued to this account.
+
+    Used when a handset is lost and when an account is suspended - without it,
+    reactivating a suspended account would quietly revive the tokens it had.
+    """
+    conn.execute(
+        "UPDATE users SET session_epoch = session_epoch + 1 WHERE id = ?", (user_id,))
+    row = conn.execute(
+        "SELECT session_epoch FROM users WHERE id = ?", (user_id,)).fetchone()
+    return row["session_epoch"] if row else 0

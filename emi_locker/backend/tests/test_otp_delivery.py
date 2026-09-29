@@ -261,3 +261,91 @@ def test_the_real_channel_receives_the_code_that_was_issued(client, monkeypatch)
     assert delivered["ttl"] == 300
     assert client.post("/auth/verify-otp", json={
         "mobile": RETAILER_MOBILE, "code": delivered["code"]}).status_code == 200
+
+
+# ------------------------------------------------------------------- MSG91
+
+
+def test_msg91_sends_our_own_code_through_the_flow_api():
+    seen = {}
+
+    def handler(request):
+        seen["url"] = str(request.url)
+        seen["authkey"] = request.headers.get("authkey")
+        seen["body"] = json.loads(request.read())
+        return httpx.Response(200, json={"message": "5762846b4f8d285d378b4567",
+                                         "type": "success"})
+
+    from backend.app.notifications import Msg91Channel
+
+    channel = Msg91Channel(auth_key="AK123", template_id="TPL987", sender="EMILCK",
+                           client=transport(handler))
+    out = channel.send_otp("9876543210", "482910", 300)
+
+    assert seen["url"] == "https://api.msg91.com/api/v5/flow/"
+    assert seen["authkey"] == "AK123"
+    assert seen["body"]["template_id"] == "TPL987"
+    assert seen["body"]["sender"] == "EMILCK"
+    assert seen["body"]["recipients"] == [{"mobiles": "919876543210", "OTP": "482910"}]
+    assert out["provider_ref"] == "5762846b4f8d285d378b4567"
+
+
+def test_msg91_failure_reported_as_http_200_is_still_a_failure():
+    """The trap: MSG91 answers 200 with type=error for a message it refused."""
+    def handler(request):
+        return httpx.Response(200, json={"type": "error",
+                                         "message": "template not approved"})
+
+    from backend.app.notifications import Msg91Channel
+
+    channel = Msg91Channel("AK", "TPL", client=transport(handler))
+    with pytest.raises(OtpDeliveryError) as exc:
+        channel.send_otp("9876543210", "482910", 300)
+    assert "template not approved" in str(exc.value)
+
+
+def test_msg91_variable_name_follows_the_registered_dlt_template():
+    seen = {}
+
+    def handler(request):
+        seen["body"] = json.loads(request.read())
+        return httpx.Response(200, json={"message": "id", "type": "success"})
+
+    from backend.app.notifications import Msg91Channel
+
+    channel = Msg91Channel("AK", "TPL", code_variable="VAR1",
+                           extra_variables={"COMPANY": "Ashish Enterprises"},
+                           client=transport(handler))
+    channel.send_otp("9876543210", "482910", 300)
+
+    recipient = seen["body"]["recipients"][0]
+    assert recipient["VAR1"] == "482910"
+    assert recipient["COMPANY"] == "Ashish Enterprises"
+    assert "OTP" not in recipient
+
+
+def test_msg91_refuses_to_build_without_a_template():
+    from backend.app.notifications import Msg91Channel
+
+    with pytest.raises(ValueError):
+        Msg91Channel(auth_key="AK", template_id="")
+
+
+def test_msg91_is_selected_by_configuration():
+    from backend.app.notifications import Msg91Channel
+
+    built = build_channel(_settings(
+        EMI_OTP_CHANNEL="msg91", EMI_MSG91_KEY="AK",
+        EMI_MSG91_TEMPLATE_ID="TPL"))
+    assert isinstance(built, Msg91Channel)
+
+
+def test_production_refuses_msg91_without_credentials():
+    half = _settings(
+        EMI_ENV="production", EMI_EXPOSE_OTP="0",
+        EMI_JWT_SECRET="x" * 40, EMI_WEBHOOK_SECRET="y" * 40,
+        EMI_CORS="https://admin.example", EMI_OTP_CHANNEL="msg91",
+        EMI_MSG91_KEY="AK")
+    with pytest.raises(RuntimeError) as exc:
+        half.validate()
+    assert "EMI_MSG91_TEMPLATE_ID" in str(exc.value)

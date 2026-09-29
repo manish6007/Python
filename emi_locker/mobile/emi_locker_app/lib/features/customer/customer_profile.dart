@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/api_client.dart';
 import '../../core/widgets.dart';
 import '../../main.dart';
 
@@ -81,6 +82,45 @@ class CustomerProfile extends StatelessWidget {
               onPressed: session.signOut,
               icon: const Icon(Icons.logout),
               label: const Text('Sign out'),
+            ),
+            const SizedBox(height: 10),
+            // Sessions last a month, so losing a handset needs a way to end
+            // them all rather than waiting for one to lapse.
+            TextButton.icon(
+              onPressed: () async {
+                final confirmed = await showDialog<bool>(
+                  context: context,
+                  builder: (dialogContext) => AlertDialog(
+                    title: const Text('Sign out on all devices?'),
+                    content: const Text(
+                      'Use this if you have lost your phone. You will be '
+                      'signed out here too, and will need a new code to sign '
+                      'back in.',
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.of(dialogContext).pop(false),
+                        child: const Text('Cancel'),
+                      ),
+                      FilledButton(
+                        style: FilledButton.styleFrom(
+                            minimumSize: const Size(0, 40)),
+                        onPressed: () => Navigator.of(dialogContext).pop(true),
+                        child: const Text('Sign out everywhere'),
+                      ),
+                    ],
+                  ),
+                );
+                if (confirmed != true) return;
+                try {
+                  await session.api.post('/auth/sign-out-everywhere');
+                } on ApiException catch (error) {
+                  if (context.mounted) showError(context, error);
+                }
+                await session.signOut();
+              },
+              icon: const Icon(Icons.phonelink_erase, size: 18),
+              label: const Text('Lost your phone? Sign out everywhere'),
             ),
           ],
         );

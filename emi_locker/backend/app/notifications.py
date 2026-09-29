@@ -11,7 +11,8 @@ Channels available:
 * ``console``  - prints to the server log. The local default; no provider.
 * ``evolution`` - Evolution Go, a whatsmeow-based WhatsApp gateway paired by
   QR to a real number. See the warning on EvolutionGoChannel.
-* ``http``     - a generic JSON POST, for an SMS aggregator or an official
+* ``msg91``    - MSG91's Flow API, the usual SMS route for India.
+* ``http``     - a generic JSON POST, for any other aggregator or an official
   WhatsApp Business provider, configured by URL and field names.
 
 Swapping channel is an environment variable, not a code change.
@@ -145,6 +146,94 @@ class EvolutionGoChannel:
         return {"delivered": True, "channel": self.name, "provider_ref": reference}
 
 
+class Msg91Channel:
+    """MSG91 Flow API - templated SMS, the usual route for India.
+
+    Two things worth knowing.
+
+    **This sends our own code; it does not use MSG91's OTP API.** That API
+    would generate and verify the code itself, handing over the hashing,
+    single-use and attempt-capping this backend already does and has tests
+    for. Sending through Flow keeps verification here and still satisfies DLT,
+    which only cares that the *text* matches a registered template.
+
+    **MSG91 answers HTTP 200 on failure.** A rejected message comes back as
+    ``{"type": "error", "message": "..."}`` with a 200 status, so checking the
+    status code alone reports success for messages that were never sent.
+
+    The variable name carrying the code (``OTP`` below) has to match the
+    variable in the DLT template registered in the MSG91 panel.
+    """
+
+    name = "msg91"
+    ENDPOINT = "https://api.msg91.com/api/v5/flow/"
+
+    def __init__(
+        self,
+        auth_key: str,
+        template_id: str,
+        sender: str = "",
+        code_variable: str = "OTP",
+        extra_variables: Optional[Dict[str, Any]] = None,
+        country_code: str = "91",
+        timeout_seconds: float = 10.0,
+        endpoint: str = "",
+        client: Optional[httpx.Client] = None,
+    ):
+        if not auth_key or not template_id:
+            raise ValueError("msg91 channel needs EMI_MSG91_KEY and EMI_MSG91_TEMPLATE_ID")
+        self.auth_key = auth_key
+        self.template_id = template_id
+        self.sender = sender
+        self.code_variable = code_variable
+        self.extra_variables = extra_variables or {}
+        self.country_code = country_code
+        self.timeout_seconds = timeout_seconds
+        self.endpoint = endpoint or self.ENDPOINT
+        self._client = client
+
+    def send_otp(self, mobile: str, code: str, ttl_seconds: int) -> Dict[str, Any]:
+        recipient: Dict[str, Any] = {"mobiles": "%s%s" % (self.country_code, mobile)}
+        recipient.update(self.extra_variables)
+        recipient[self.code_variable] = code
+
+        payload: Dict[str, Any] = {
+            "template_id": self.template_id,
+            "short_url": "0",
+            "recipients": [recipient],
+        }
+        if self.sender:
+            payload["sender"] = self.sender
+
+        headers = {"authkey": self.auth_key, "Content-Type": "application/json"}
+        try:
+            if self._client is not None:
+                response = self._client.post(self.endpoint, json=payload, headers=headers)
+            else:
+                with httpx.Client(timeout=self.timeout_seconds) as client:
+                    response = client.post(self.endpoint, json=payload, headers=headers)
+        except httpx.HTTPError as exc:
+            raise OtpDeliveryError("msg91 unreachable: %s" % exc)
+
+        if response.status_code >= 400:
+            raise OtpDeliveryError(
+                "msg91 rejected the message (HTTP %d): %s"
+                % (response.status_code, response.text[:200]))
+
+        try:
+            body = response.json()
+        except ValueError:
+            raise OtpDeliveryError("msg91 returned a body that is not JSON")
+
+        # The important check: a 200 does not mean it was sent.
+        if str(body.get("type", "")).lower() != "success":
+            raise OtpDeliveryError(
+                "msg91 reported failure: %s" % (body.get("message") or body))
+
+        return {"delivered": True, "channel": self.name,
+                "provider_ref": body.get("message")}
+
+
 class HttpChannel:
     """A generic JSON POST, for an SMS aggregator or a licensed WhatsApp BSP.
 
@@ -220,6 +309,14 @@ def build_channel(settings) -> OtpChannel:
             api_key=settings.wa_api_key,
             template=settings.otp_template,
             business=settings.business_name,
+            country_code=settings.country_code,
+        )
+    if choice == "msg91":
+        return Msg91Channel(
+            auth_key=settings.msg91_key,
+            template_id=settings.msg91_template_id,
+            sender=settings.msg91_sender,
+            code_variable=settings.msg91_code_variable,
             country_code=settings.country_code,
         )
     if choice == "http":

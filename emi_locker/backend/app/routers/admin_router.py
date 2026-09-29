@@ -18,6 +18,7 @@ from emi_locker.core import create_user
 from emi_locker.db import tx
 from emi_locker.errors import NotFound, PermissionDenied
 
+from ..auth import end_all_sessions
 from ..deps import current_actor, get_conn, require_roles
 from ..schemas import (
     CreateUserIn,
@@ -157,6 +158,10 @@ def set_user_status(user_id: str, body: UserStatusIn, actor: Actor = Depends(Adm
         raise PermissionDenied("an admin account cannot be suspended from here")
     with tx(conn):
         conn.execute("UPDATE users SET status = ? WHERE id = ?", (body.status, user_id))
+        if body.status == "SUSPENDED":
+            # Also end their live sessions. Without this, reactivating the
+            # account later would silently revive every token it still held.
+            end_all_sessions(conn, user_id)
         audit_log(conn, actor, "user.status_change", "user", user_id,
                   before={"status": row["status"]},
                   after={"status": body.status, "reason": body.reason})

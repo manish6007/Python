@@ -31,8 +31,14 @@ class Settings:
         default_factory=lambda: os.getenv("EMI_JWT_SECRET", DEV_JWT_SECRET))
     webhook_secret: str = field(
         default_factory=lambda: os.getenv("EMI_WEBHOOK_SECRET", DEV_WEBHOOK_SECRET))
-    token_ttl_minutes: int = field(
-        default_factory=lambda: int(os.getenv("EMI_TOKEN_TTL_MIN", "720")))
+    # Session length is the biggest driver of the OTP bill: a short session
+    # means a fresh code on almost every visit. Business users get a long one;
+    # the admin panel does not, because it can suspend accounts, issue licences
+    # and move commission rates, and it is often open on a shared desktop.
+    admin_session_minutes: int = field(
+        default_factory=lambda: int(os.getenv("EMI_ADMIN_SESSION_MIN", "720")))
+    app_session_minutes: int = field(
+        default_factory=lambda: int(os.getenv("EMI_APP_SESSION_MIN", "43200")))
     otp_ttl_seconds: int = field(
         default_factory=lambda: int(os.getenv("EMI_OTP_TTL_SEC", "300")))
     otp_max_attempts: int = field(
@@ -55,6 +61,14 @@ class Settings:
     wa_instance: str = field(default_factory=lambda: os.getenv("EMI_WA_INSTANCE", ""))
     wa_api_key: str = field(default_factory=lambda: os.getenv("EMI_WA_API_KEY", ""))
 
+    # MSG91 Flow API (SMS)
+    msg91_key: str = field(default_factory=lambda: os.getenv("EMI_MSG91_KEY", ""))
+    msg91_template_id: str = field(
+        default_factory=lambda: os.getenv("EMI_MSG91_TEMPLATE_ID", ""))
+    msg91_sender: str = field(default_factory=lambda: os.getenv("EMI_MSG91_SENDER", ""))
+    msg91_code_variable: str = field(
+        default_factory=lambda: os.getenv("EMI_MSG91_CODE_VAR", "OTP"))
+
     # Generic JSON provider (SMS aggregator or licensed WhatsApp BSP)
     otp_http_url: str = field(default_factory=lambda: os.getenv("EMI_OTP_HTTP_URL", ""))
     otp_http_key: str = field(default_factory=lambda: os.getenv("EMI_OTP_HTTP_KEY", ""))
@@ -64,6 +78,10 @@ class Settings:
         default_factory=lambda: os.getenv("EMI_OTP_HTTP_TO_FIELD", "to"))
     otp_http_body_field: str = field(
         default_factory=lambda: os.getenv("EMI_OTP_HTTP_BODY_FIELD", "message"))
+
+    def session_minutes_for(self, role: str) -> int:
+        return (self.admin_session_minutes if role == "SUPER_ADMIN"
+                else self.app_session_minutes)
 
     @property
     def is_local(self) -> bool:
@@ -99,6 +117,11 @@ class Settings:
             problems.append(
                 "EMI_OTP_CHANNEL=evolution needs EMI_WA_URL, EMI_WA_INSTANCE"
                 " and EMI_WA_API_KEY")
+        if self.otp_channel == "msg91" and not (
+                self.msg91_key and self.msg91_template_id):
+            problems.append(
+                "EMI_OTP_CHANNEL=msg91 needs EMI_MSG91_KEY and"
+                " EMI_MSG91_TEMPLATE_ID")
         if self.otp_channel == "http" and not self.otp_http_url:
             problems.append("EMI_OTP_CHANNEL=http needs EMI_OTP_HTTP_URL")
         if problems:

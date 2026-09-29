@@ -7,7 +7,9 @@ from fastapi import APIRouter, Depends
 
 from emi_locker.core import Actor
 
-from ..auth import profile_for, send_otp, verify_otp
+from emi_locker.db import tx
+
+from ..auth import end_all_sessions, profile_for, send_otp, verify_otp
 from ..deps import current_actor, get_conn
 from ..schemas import SendOtpIn, VerifyOtpIn
 
@@ -27,6 +29,18 @@ def post_verify_otp(body: VerifyOtpIn, conn: sqlite3.Connection = Depends(get_co
     # connection is in autocommit mode, so each statement in verify_otp
     # stands on its own.
     return verify_otp(conn, body.mobile, body.code)
+
+
+@router.post("/sign-out-everywhere")
+def post_sign_out_everywhere(actor: Actor = Depends(current_actor),
+                             conn: sqlite3.Connection = Depends(get_conn)):
+    """End this account's sessions on every device, including this one.
+
+    What a customer taps after losing a handset.
+    """
+    with tx(conn):
+        epoch = end_all_sessions(conn, actor.user_id)
+    return {"signed_out": True, "session_epoch": epoch}
 
 
 @router.get("/me")

@@ -10,7 +10,8 @@ The backend does not care which channel is used. Pick one with
 |---|---|---|
 | `console` | Prints the code to the server log | Local testing (the default) |
 | `evolution` | [Evolution Go](https://github.com/evolution-foundation/evolution-go), an unofficial WhatsApp gateway | Pilots, with the warning below |
-| `http` | Any JSON API — SMS aggregator or licensed WhatsApp provider | Production |
+| `msg91` | MSG91 Flow API — templated SMS | Production SMS in India |
+| `http` | Any other JSON API — aggregator or licensed WhatsApp provider | Production |
 
 The API also returns the code in the response while `EMI_EXPOSE_OTP=1`, which
 is why you can sign in locally with no provider at all. The app refuses to
@@ -63,6 +64,46 @@ apikey: your-evolution-api-key
   "text": "482910 is your Ashish Enterprises verification code. It is valid for 5 minutes. Do not share it with anyone."
 }
 ```
+
+---
+
+## MSG91 (SMS)
+
+```bash
+EMI_OTP_CHANNEL=msg91
+EMI_MSG91_KEY=your-authkey
+EMI_MSG91_TEMPLATE_ID=your-dlt-approved-template-id
+EMI_MSG91_SENDER=EMILCK          # your registered header
+EMI_MSG91_CODE_VAR=OTP           # the variable in your template that holds the code
+```
+
+The backend sends:
+
+```
+POST https://api.msg91.com/api/v5/flow/
+authkey: your-authkey
+
+{
+  "template_id": "your-template-id",
+  "sender": "EMILCK",
+  "short_url": "0",
+  "recipients": [{"mobiles": "919876543210", "OTP": "482910"}]
+}
+```
+
+Two things this adapter handles that a naive one would not:
+
+- **It sends our own code.** MSG91 also offers an OTP API that generates and
+  verifies the code for you. Using it would hand over the hashing, single-use
+  and attempt-capping this backend already does and has tests for. Flow keeps
+  verification here, and DLT only cares that the text matches a registered
+  template.
+- **MSG91 answers HTTP 200 when it refuses a message**, with
+  `{"type": "error", ...}` in the body. Checking the status code alone would
+  log a success for a message that was never sent.
+
+`EMI_MSG91_CODE_VAR` must match the variable name in your registered template.
+If the template reads `##VAR1## is your verification code`, set it to `VAR1`.
 
 ---
 
@@ -122,6 +163,28 @@ ERROR emi.otp OTP delivery failed via evolution for 98****10: evolution gateway 
 
 A code that failed to send is still a valid code — issuance and delivery are
 separate steps, so a customer who receives a delayed message can still use it.
+
+## Sending fewer codes
+
+The rate per message matters less than how many you send, and that is set by
+how long a session lasts:
+
+| | Session | Codes per user per month |
+|---|---|---|
+| Customer / Retailer / Distributor apps | 30 days (`EMI_APP_SESSION_MIN`) | ~1 |
+| Admin panel | 12 hours (`EMI_ADMIN_SESSION_MIN`) | ~45 |
+
+The apps were on 12 hours for everyone, which meant a fresh code on nearly
+every visit. Lengthening them cuts the bill by several times over — more than
+the difference between the cheapest and the mid-priced provider.
+
+Long sessions need a way to end one early, so:
+
+- **Customers** can tap *Lost your phone? Sign out everywhere* in Profile.
+- **Suspending an account** ends its live sessions as well as blocking new
+  requests. Without that, reactivating the account later would revive every
+  token it still held.
+- `POST /auth/sign-out-everywhere` does it for the caller's own account.
 
 ## Receiving messages
 

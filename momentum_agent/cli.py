@@ -1,0 +1,115 @@
+"""Command line entry point.
+
+    python -m momentum_agent.cli backtest --years 10 --capital 1000000
+    python -m momentum_agent.cli backtest --csv-dir my_data/       # use your own OHLCV CSVs
+    python -m momentum_agent.cli signals --holdings holdings.csv   # this week's orders
+"""
+import argparse
+import dataclasses
+from datetime import date, timedelta
+from pathlib import Path
+
+import pandas as pd
+
+from .backtest import run_backtest
+from .config import Settings, StrategyConfig
+from .data import download_yahoo, load_csv_dir, to_panel
+from .report import render
+from .strategy import compute_signals, select_trades
+from .universe import load_universe
+
+WARMUP_DAYS = 420  # calendar days of history needed before the first signal (252 trading days + MA)
+
+
+def _load(args, settings, start):
+    symbols = load_universe(args.universe_file) + [settings.index_symbol]
+    if args.csv_dir:
+        frames = load_csv_dir(args.csv_dir, set(symbols))
+    else:
+        frames = download_yahoo(symbols, start=start, end=None, cache_dir=args.cache_dir,
+                                refresh=args.refresh)
+    index_frame = frames.pop(settings.index_symbol, None)
+    if not frames:
+        raise SystemExit("No price data loaded. Check network access / --csv-dir.")
+    print(f"Loaded {len(frames)} symbols.")
+    return to_panel(frames), (index_frame["Close"] if index_frame is not None else None)
+
+
+def _settings(args) -> Settings:
+    overrides = {k: v for k, v in {
+        "initial_capital": args.capital, "num_positions": args.positions,
+        "exit_rank": args.exit_rank, "rebalance": args.rebalance, "skip_days": args.skip_days,
+    }.items() if v is not None}
+    if args.no_regime:
+        overrides["use_regime_filter"] = False
+    return Settings(strategy=dataclasses.replace(StrategyConfig(), **overrides))
+
+
+def cmd_backtest(args):
+    settings = _settings(args)
+    bt_start = date.today() - timedelta(days=int(365.25 * args.years))
+    panel, index_close = _load(args, settings, start=str(bt_start - timedelta(days=WARMUP_DAYS)))
+    result = run_backtest(panel, index_close, settings, start=str(bt_start))
+    bench = None
+    if index_close is not None:
+        bench = index_close[index_close.index >= pd.Timestamp(bt_start)]
+    print(render(result, bench))
+    out = Path(args.out)
+    out.mkdir(exist_ok=True)
+    result.equity.to_csv(out / "equity.csv")
+    result.trades.to_csv(out / "trades.csv", index=False)
+    print(f"\nEquity curve and trade log written to {out}/")
+
+
+def cmd_signals(args):
+    settings = _settings(args)
+    cfg = settings.strategy
+    start = str(date.today() - timedelta(days=WARMUP_DAYS + 30))
+    args.refresh = True
+    panel, index_close = _load(args, settings, start=start)
+    sig = compute_signals(panel, index_close, cfg)
+    day = panel["close"].index[-1]
+
+    holdings = set()
+    if args.holdings and Path(args.holdings).exists():
+        holdings = set(pd.read_csv(args.holdings)["symbol"].str.upper())
+    sells, buys = select_trades(day, holdings, sig, cfg)
+    close = panel["close"].loc[day]
+    print(f"Signals as of close {day.date()}  |  market regime: "
+          f"{'RISK-ON' if sig.regime_on.loc[day] else 'RISK-OFF (no new buys)'}")
+    print("\nSELL at next open:", ", ".join(sorted(sells)) or "none")
+    target = cfg.initial_capital / cfg.num_positions
+    print(f"\nBUY at next open (Rs {target:,.0f} each):")
+    for sym in buys:
+        print(f"  {sym:<12} rank {int(sig.rank.loc[day, sym]):>3}  ~{int(target // close[sym])} sh @ ~{close[sym]:,.2f}")
+    print("\nTop 20 ranking:")
+    top = sig.rank.loc[day].dropna().sort_values().head(20)
+    for sym, r in top.items():
+        flag = "held" if sym in holdings else ("ok" if sig.buy_ok.loc[day, sym] else "filtered")
+        print(f"  {int(r):>3}. {sym:<12} score {sig.score.loc[day, sym]:+.2f}  [{flag}]")
+
+
+def main():
+    p = argparse.ArgumentParser(description="NSE delivery momentum strategy")
+    sub = p.add_subparsers(dest="cmd", required=True)
+    for name in ("backtest", "signals"):
+        sp = sub.add_parser(name)
+        sp.add_argument("--capital", type=float)
+        sp.add_argument("--positions", type=int)
+        sp.add_argument("--exit-rank", type=int)
+        sp.add_argument("--rebalance", choices=["W", "M"])
+        sp.add_argument("--skip-days", type=int)
+        sp.add_argument("--no-regime", action="store_true")
+        sp.add_argument("--universe-file")
+        sp.add_argument("--csv-dir", help="folder of <SYMBOL>.csv files instead of downloading")
+        sp.add_argument("--cache-dir", default="data_cache")
+        sp.add_argument("--refresh", action="store_true")
+    sub.choices["backtest"].add_argument("--years", type=float, default=10)
+    sub.choices["backtest"].add_argument("--out", default="results")
+    sub.choices["signals"].add_argument("--holdings", help="CSV with a 'symbol' column")
+    args = p.parse_args()
+    {"backtest": cmd_backtest, "signals": cmd_signals}[args.cmd](args)
+
+
+if __name__ == "__main__":
+    main()

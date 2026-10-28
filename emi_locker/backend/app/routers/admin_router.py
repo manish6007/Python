@@ -109,9 +109,9 @@ def audit(entity_id: str, actor: Actor = Depends(AdminActor),
 @router.post("/admin/run-daily-sweep")
 def run_sweep(actor: Actor = Depends(AdminActor),
               conn: sqlite3.Connection = Depends(get_conn)):
-    with tx(conn):
-        moved = lifecycle.run_daily_status_sweep(conn, actor)
-    return {"moved": {k: len(v) for k, v in moved.items()}}
+    from ..jobs import nightly
+
+    return {"moved": nightly(conn, actor)}
 
 
 # ---------------------------------------------------------------- the network

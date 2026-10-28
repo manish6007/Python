@@ -15,7 +15,7 @@ import json
 
 from . import devices as devices_mod
 from . import finance as finance_mod
-from . import licensing, lifecycle, payments, reports
+from . import licensing, lifecycle, notices, payments, reports
 from .core import Actor, create_user, format_inr, rupees
 from .db import open_db, tx
 from .errors import DomainError
@@ -31,6 +31,14 @@ class DemoProvider:
     def send(self, device_imei, command, context):
         return {"delivered": True, "provider_ref": "demo-%s-%s" % (command.lower(), device_imei[-4:]),
                 "detail": "sandbox acknowledgement only"}
+
+
+class DemoInbox:
+    """Stand-in for SMS/WhatsApp: prints the notice the customer would receive."""
+
+    def send_notice(self, mobile, text, variables):
+        print("    SMS to %s: %s" % (mobile, text))
+        return {"delivered": True, "channel": "demo-sms"}
 
 
 def line(title):
@@ -192,6 +200,8 @@ def main() -> None:  # noqa: C901 - a linear narrative reads better unsplit
         as_of += _dt.timedelta(days=1)
         with tx(conn):
             moved = lifecycle.run_daily_status_sweep(conn, ops, as_of=as_of)
+            notices.deliver_pending_notices(conn, DemoInbox(), ops, as_of=as_of,
+                                            business="Ashish Enterprises")
         for kind in ("NOTICE_FIRST", "NOTICE_SECOND"):
             if moved[kind]:
                 notice = conn.execute(

@@ -226,6 +226,6 @@ def run_sweep(actor: Actor = Depends(RetailerActor),
 
     In production this is a scheduled job, not an endpoint anyone can call.
     """
-    with tx(conn):
-        moved = lifecycle.run_daily_status_sweep(conn, actor)
-    return {"moved": {k: len(v) for k, v in moved.items()}}
+    from ..jobs import nightly
+
+    return {"moved": nightly(conn, actor)}

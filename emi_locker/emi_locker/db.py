@@ -319,8 +319,11 @@ CREATE TABLE IF NOT EXISTS restriction_notices (
     days_past_due INTEGER NOT NULL,
     issued_on     TEXT NOT NULL,
     pay_by        TEXT NOT NULL,
-    -- Set by whatever delivers the SMS / WhatsApp / push; NULL until then.
+    -- Set by notices.deliver_pending_notices; NULL until the customer has it.
+    -- An undelivered notice does not count towards a restriction.
     delivered_at  TEXT,
+    delivery_channel TEXT,
+    delivery_error   TEXT,
     created_at    TEXT NOT NULL,
     UNIQUE (emi_id, kind)
 );
@@ -373,6 +376,8 @@ def connect(path: str = ":memory:", same_thread: bool = True) -> sqlite3.Connect
 # open, because CREATE TABLE IF NOT EXISTS silently leaves them behind.
 ADDITIVE_MIGRATIONS = (
     ("users", "session_epoch", "INTEGER NOT NULL DEFAULT 0"),
+    ("restriction_notices", "delivery_channel", "TEXT"),
+    ("restriction_notices", "delivery_error", "TEXT"),
 )
 
 

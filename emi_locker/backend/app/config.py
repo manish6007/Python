@@ -68,6 +68,10 @@ class Settings:
     msg91_sender: str = field(default_factory=lambda: os.getenv("EMI_MSG91_SENDER", ""))
     msg91_code_variable: str = field(
         default_factory=lambda: os.getenv("EMI_MSG91_CODE_VAR", "OTP"))
+    # A second DLT template for restriction notices; an OTP template cannot
+    # carry their text.
+    msg91_notice_template_id: str = field(
+        default_factory=lambda: os.getenv("EMI_MSG91_NOTICE_TEMPLATE_ID", ""))
 
     # Generic JSON provider (SMS aggregator or licensed WhatsApp BSP)
     otp_http_url: str = field(default_factory=lambda: os.getenv("EMI_OTP_HTTP_URL", ""))
@@ -122,6 +126,10 @@ class Settings:
             problems.append(
                 "EMI_OTP_CHANNEL=msg91 needs EMI_MSG91_KEY and"
                 " EMI_MSG91_TEMPLATE_ID")
+        if self.otp_channel == "msg91" and not self.msg91_notice_template_id:
+            problems.append(
+                "EMI_OTP_CHANNEL=msg91 needs EMI_MSG91_NOTICE_TEMPLATE_ID - without"
+                " it restriction notices cannot be sent, so no phone can be restricted")
         if self.otp_channel == "http" and not self.otp_http_url:
             problems.append("EMI_OTP_CHANNEL=http needs EMI_OTP_HTTP_URL")
         if problems:

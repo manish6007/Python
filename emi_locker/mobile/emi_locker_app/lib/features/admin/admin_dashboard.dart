@@ -17,6 +17,7 @@ class AdminDashboard extends StatelessWidget {
         session.api.get('/reports/dashboard'),
         session.api.get('/reports/overdue'),
         session.api.get('/reports/retailers'),
+        session.api.get('/admin/unlock-monitor'),
       ]),
       builder: (context, data, reload) {
         final stats = Map<String, dynamic>.from(data[0] as Map);
@@ -25,6 +26,9 @@ class AdminDashboard extends StatelessWidget {
                 .map((e) => Map<String, dynamic>.from(e as Map)));
         final retailers = List<Map<String, dynamic>>.from(
             ((data[2] as Map)['rows'] as List)
+                .map((e) => Map<String, dynamic>.from(e as Map)));
+        final unlocks = List<Map<String, dynamic>>.from(
+            ((data[3] as Map)['waiting'] as List)
                 .map((e) => Map<String, dynamic>.from(e as Map)));
         final scheme = Theme.of(context).colorScheme;
         final width = MediaQuery.sizeOf(context).width;
@@ -145,6 +149,47 @@ class AdminDashboard extends StatelessWidget {
                           Text(Money.format(row['overdue_amount'] as int)),
                           Text(formatDate(row['oldest_due']?.toString())),
                           Text('${row['days_past_due']}'),
+                        ],
+                    ],
+                  ),
+                  const SizedBox(height: 28),
+                  Text('Unlocks waiting',
+                      style: Theme.of(context).textTheme.titleMedium),
+                  const SizedBox(height: 4),
+                  Text(
+                    'A customer who has paid must be unlocked within an hour, '
+                    'or is owed ₹250 for each hour started after that.',
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodySmall
+                        ?.copyWith(color: scheme.onSurfaceVariant),
+                  ),
+                  const SizedBox(height: 10),
+                  RecordTable(
+                    emptyMessage: 'No paid customer is waiting for an unlock',
+                    columns: const [
+                      'IMEI',
+                      'Finance',
+                      'Waiting',
+                      'Deadline',
+                      'Owed so far'
+                    ],
+                    rows: [
+                      for (final row in unlocks)
+                        [
+                          Text(row['imei'].toString()),
+                          Text(row['finance_id'].toString()),
+                          Text('${row['minutes_waiting']} min',
+                              style: TextStyle(
+                                  color: row['overdue'] == true
+                                      ? scheme.error
+                                      : null,
+                                  fontWeight: row['overdue'] == true
+                                      ? FontWeight.w600
+                                      : null)),
+                          Text(formatDateTime(row['due_by']?.toString())),
+                          Text(Money.format(
+                              row['compensation_so_far_paise'] as int)),
                         ],
                     ],
                   ),

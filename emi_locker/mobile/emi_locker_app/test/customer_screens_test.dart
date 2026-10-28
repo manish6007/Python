@@ -75,6 +75,60 @@ void main() {
     expect(find.textContaining('Clearing the arrears restores it'), findsOneWidget);
   });
 
+  testWidgets('shows the payment notice the customer was sent', (tester) async {
+    final fake = FakeApi({
+      'GET /me/finances': (_) => {
+            'customer_id': 'CUS-0000001',
+            'finances': [
+              {
+                ..._finance(status: 'OVERDUE', deviceStatus: 'OVERDUE'),
+                'notice': {
+                  'kind': 'FIRST',
+                  'issued_on': '2026-04-11',
+                  'delivered_at': '2026-04-11',
+                  'pay_by': '2026-05-02',
+                  'days_past_due': 60,
+                  'overdue_paise': 400000,
+                },
+              },
+            ],
+          },
+    });
+    await pumpSignedIn(tester, fake, customerUser,
+        const Scaffold(body: CustomerHome()));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Payment notice'), findsOneWidget);
+    expect(find.textContaining('₹4,000 is overdue. Pay by 2 May 2026'), findsOneWidget);
+    expect(find.textContaining('Calls, internet and SOS will keep working'), findsOneWidget);
+  });
+
+  testWidgets('the second notice reads as final', (tester) async {
+    final fake = FakeApi({
+      'GET /me/finances': (_) => {
+            'customer_id': 'CUS-0000001',
+            'finances': [
+              {
+                ..._finance(status: 'OVERDUE', deviceStatus: 'OVERDUE'),
+                'notice': {
+                  'kind': 'SECOND',
+                  'issued_on': '2026-05-03',
+                  'delivered_at': '2026-05-03',
+                  'pay_by': '2026-05-10',
+                  'days_past_due': 82,
+                  'overdue_paise': 600000,
+                },
+              },
+            ],
+          },
+    });
+    await pumpSignedIn(tester, fake, customerUser,
+        const Scaffold(body: CustomerHome()));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Final notice'), findsOneWidget);
+  });
+
   testWidgets('surfaces a backend failure with a retry instead of a blank screen',
       (tester) async {
     final fake = FakeApi({

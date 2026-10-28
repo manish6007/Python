@@ -6,7 +6,7 @@ import sqlite3
 from fastapi import APIRouter, Depends
 
 from emi_locker import finance as finance_mod
-from emi_locker import lifecycle
+from emi_locker import lifecycle, notices
 from emi_locker.core import Actor
 
 from ..access import own_customer_id
@@ -36,7 +36,8 @@ def my_finances(actor: Actor = Depends(current_actor),
             "SELECT id, seq, amount_paise, due_date, status FROM emi_schedules"
             " WHERE finance_id = ? AND status NOT IN ('PAID','WAIVED') ORDER BY seq LIMIT 1",
             (row["finance_id"],)).fetchone()
-        out.append(dict(row, next_due=dict(next_due) if next_due else None))
+        out.append(dict(row, next_due=dict(next_due) if next_due else None,
+                        notice=notices.active_notice(conn, row["finance_id"])))
     return {"customer_id": customer_id, "finances": out}
 
 

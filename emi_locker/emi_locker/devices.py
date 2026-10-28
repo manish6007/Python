@@ -124,11 +124,15 @@ def eligibility_for_restriction(
                           % (days_past_due, min_days)}
 
     second = conn.execute(
-        "SELECT pay_by FROM restriction_notices WHERE emi_id = ? AND kind = 'SECOND'",
+        "SELECT pay_by, delivered_at FROM restriction_notices"
+        " WHERE emi_id = ? AND kind = 'SECOND'",
         (anchor["id"],),
     ).fetchone()
     if second is None:
         return {"eligible": False, "reason": "the second notice has not been issued"}
+    if second["delivered_at"] is None:
+        return {"eligible": False,
+                "reason": "the second notice has not reached the customer yet"}
     if as_of <= _dt.date.fromisoformat(second["pay_by"]):
         return {"eligible": False,
                 "reason": "the second notice gives the customer until %s to pay"

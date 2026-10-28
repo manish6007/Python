@@ -68,6 +68,10 @@ class ConsoleChannel:
         print("[OTP] %s -> %s (valid %ds)" % (mobile, code, ttl_seconds), flush=True)
         return {"delivered": True, "channel": self.name, "provider_ref": None}
 
+    def send_notice(self, mobile: str, text: str, variables: Dict[str, Any]) -> Dict[str, Any]:
+        print("[NOTICE] %s -> %s" % (mobile, text), flush=True)
+        return {"delivered": True, "channel": self.name, "provider_ref": None}
+
 
 class EvolutionGoChannel:
     """Evolution Go - a whatsmeow WhatsApp gateway paired by QR code.
@@ -122,10 +126,16 @@ class EvolutionGoChannel:
             return client.post(url, json=payload, headers=headers)
 
     def send_otp(self, mobile: str, code: str, ttl_seconds: int) -> Dict[str, Any]:
+        return self._send_text(mobile, render(self.template, code, ttl_seconds, self.business))
+
+    def send_notice(self, mobile: str, text: str, variables: Dict[str, Any]) -> Dict[str, Any]:
+        return self._send_text(mobile, text)
+
+    def _send_text(self, mobile: str, text: str) -> Dict[str, Any]:
         url = "%s/message/sendText/%s" % (self.base_url, self.instance)
         payload = {
             "number": "%s%s" % (self.country_code, mobile),
-            "text": render(self.template, code, ttl_seconds, self.business),
+            "text": text,
         }
         try:
             response = self._post(url, payload)
@@ -179,11 +189,13 @@ class Msg91Channel:
         timeout_seconds: float = 10.0,
         endpoint: str = "",
         client: Optional[httpx.Client] = None,
+        notice_template_id: str = "",
     ):
         if not auth_key or not template_id:
             raise ValueError("msg91 channel needs EMI_MSG91_KEY and EMI_MSG91_TEMPLATE_ID")
         self.auth_key = auth_key
         self.template_id = template_id
+        self.notice_template_id = notice_template_id
         self.sender = sender
         self.code_variable = code_variable
         self.extra_variables = extra_variables or {}
@@ -196,9 +208,23 @@ class Msg91Channel:
         recipient: Dict[str, Any] = {"mobiles": "%s%s" % (self.country_code, mobile)}
         recipient.update(self.extra_variables)
         recipient[self.code_variable] = code
+        return self._flow(self.template_id, recipient)
 
+    def send_notice(self, mobile: str, text: str, variables: Dict[str, Any]) -> Dict[str, Any]:
+        """MSG91 fills the registered notice template; the text is not sent.
+
+        The template's variables must be named like the keys of ``variables``
+        (business, amount, model, days, pay_by, retailer).
+        """
+        if not self.notice_template_id:
+            raise OtpDeliveryError("no EMI_MSG91_NOTICE_TEMPLATE_ID configured")
+        recipient: Dict[str, Any] = {"mobiles": "%s%s" % (self.country_code, mobile)}
+        recipient.update({k: str(v) for k, v in variables.items()})
+        return self._flow(self.notice_template_id, recipient)
+
+    def _flow(self, template_id: str, recipient: Dict[str, Any]) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
-            "template_id": self.template_id,
+            "template_id": template_id,
             "short_url": "0",
             "recipients": [recipient],
         }
@@ -275,10 +301,15 @@ class HttpChannel:
         self._client = client
 
     def send_otp(self, mobile: str, code: str, ttl_seconds: int) -> Dict[str, Any]:
+        return self._send_text(mobile, render(self.template, code, ttl_seconds, self.business))
+
+    def send_notice(self, mobile: str, text: str, variables: Dict[str, Any]) -> Dict[str, Any]:
+        return self._send_text(mobile, text)
+
+    def _send_text(self, mobile: str, text: str) -> Dict[str, Any]:
         payload = dict(self.extra_fields)
         payload[self.to_field] = "%s%s" % (self.country_code, mobile)
-        payload[self.body_field] = render(
-            self.template, code, ttl_seconds, self.business)
+        payload[self.body_field] = text
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers[self.auth_header] = "%s%s" % (self.auth_prefix, self.api_key)
@@ -318,6 +349,7 @@ def build_channel(settings) -> OtpChannel:
             sender=settings.msg91_sender,
             code_variable=settings.msg91_code_variable,
             country_code=settings.country_code,
+            notice_template_id=settings.msg91_notice_template_id,
         )
     if choice == "http":
         return HttpChannel(

@@ -14,7 +14,7 @@ import datetime as _dt
 
 import pytest
 
-from emi_locker import devices, lifecycle, payments, settings_store
+from emi_locker import devices, lifecycle, notices, payments, settings_store
 from emi_locker.core import Actor, create_user, rupees
 from emi_locker.db import migrate, open_db, tx
 from emi_locker.errors import PermissionDenied, ValidationError
@@ -48,9 +48,24 @@ class DownProvider:
         return {"delivered": False, "provider_ref": None, "detail": "provider timeout"}
 
 
-def sweep(world, as_of):
+class InboxChannel:
+    """Delivers every notice instantly and keeps what it sent."""
+
+    def __init__(self):
+        self.sent = []
+
+    def send_notice(self, mobile, text, variables):
+        self.sent.append((mobile, text))
+        return {"delivered": True, "channel": "test-inbox"}
+
+
+def sweep(world, as_of, deliver=True):
+    """The nightly job: sweep, then deliver whatever notices it raised."""
     with tx(world["conn"]):
-        return lifecycle.run_daily_status_sweep(world["conn"], world["admin"], as_of=as_of)
+        moved = lifecycle.run_daily_status_sweep(world["conn"], world["admin"], as_of=as_of)
+        if deliver:
+            notices.deliver_pending_notices(world["conn"], InboxChannel(), as_of=as_of)
+    return moved
 
 
 def base_world():
@@ -156,9 +171,9 @@ def test_notices_follow_the_60_day_and_21_plus_7_day_schedule():
         " ORDER BY kind").fetchall()
     assert [dict(r) for r in rows] == [
         {"kind": "FIRST", "days_past_due": 60, "issued_on": "2026-04-11",
-         "pay_by": "2026-05-02", "delivered_at": None},
+         "pay_by": "2026-05-02", "delivered_at": "2026-04-11"},
         {"kind": "SECOND", "days_past_due": 82, "issued_on": "2026-05-03",
-         "pay_by": "2026-05-10", "delivered_at": None},
+         "pay_by": "2026-05-10", "delivered_at": "2026-05-03"},
     ]
     # Idempotent: a re-run issues nothing new.
     again = sweep(world, SECOND_NOTICE_DAY)

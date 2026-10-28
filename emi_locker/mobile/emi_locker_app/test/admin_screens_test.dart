@@ -62,6 +62,7 @@ void main() {
       'GET /reports/dashboard': (_) => _stats,
       'GET /reports/overdue': (_) => {'rows': []},
       'GET /reports/retailers': (_) => {'rows': []},
+      'GET /admin/unlock-monitor': (_) => {'waiting': []},
     });
     await pumpSignedIn(tester, fake, adminUser, const AdminShell(), desktop: true);
     await tester.pumpAndSettle();
@@ -78,6 +79,7 @@ void main() {
       'GET /reports/dashboard': (_) => _stats,
       'GET /reports/overdue': (_) => {'rows': []},
       'GET /reports/retailers': (_) => {'rows': []},
+      'GET /admin/unlock-monitor': (_) => {'waiting': []},
     });
     await pumpSignedIn(tester, fake, adminUser, const AdminShell());
     await tester.pumpAndSettle();
@@ -104,6 +106,7 @@ void main() {
             ],
           },
       'GET /reports/retailers': (_) => {'rows': []},
+      'GET /admin/unlock-monitor': (_) => {'waiting': []},
     });
     await pumpSignedIn(tester, fake, adminUser,
         const Scaffold(body: AdminDashboard()), desktop: true);
@@ -113,6 +116,37 @@ void main() {
     expect(find.text('497'), findsOneWidget);
     expect(find.text('FIN-0000001'), findsOneWidget);
     expect(find.text('10'), findsWidgets);
+    expect(find.text('No paid customer is waiting for an unlock'), findsOneWidget);
+  });
+
+  testWidgets('a late unlock is listed with what is owed', (tester) async {
+    final fake = FakeApi({
+      'GET /reports/dashboard': (_) => _stats,
+      'GET /reports/overdue': (_) => {'rows': []},
+      'GET /reports/retailers': (_) => {'rows': []},
+      'GET /admin/unlock-monitor': (_) => {
+            'waiting': [
+              {
+                'obligation_id': 'UNL-0000001',
+                'device_id': 'DEV-0000001',
+                'imei': '490154203237518',
+                'finance_id': 'FIN-0000001',
+                'command_id': 'CMD-0000002',
+                'minutes_waiting': 95,
+                'due_by': '2026-05-12T11:00:00+00:00',
+                'overdue': true,
+                'compensation_so_far_paise': 25000,
+              },
+            ],
+          },
+    });
+    await pumpSignedIn(tester, fake, adminUser,
+        const Scaffold(body: AdminDashboard()), desktop: true);
+    await tester.pumpAndSettle();
+
+    expect(find.text('490154203237518'), findsOneWidget);
+    expect(find.text('95 min'), findsOneWidget);
+    expect(find.text('₹250'), findsOneWidget);
   });
 
   testWidgets('the network reads as distributors with retailers under them',

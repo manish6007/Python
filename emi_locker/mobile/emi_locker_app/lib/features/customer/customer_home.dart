@@ -43,6 +43,57 @@ class CustomerHome extends StatelessWidget {
   }
 }
 
+/// The restriction notice the customer was sent, so the app says the same
+/// thing as the SMS: what is owed, the date to pay by, and what keeps working.
+class _NoticeBanner extends StatelessWidget {
+  const _NoticeBanner({required this.notice});
+
+  final Map<String, dynamic> notice;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final isFinal = notice['kind'] == 'SECOND';
+    final background = isFinal ? scheme.errorContainer : scheme.tertiaryContainer;
+    final foreground = isFinal ? scheme.onErrorContainer : scheme.onTertiaryContainer;
+    final amount = Money.format(notice['overdue_paise'] as int);
+    final payBy = formatDate(notice['pay_by']?.toString());
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(isFinal ? Icons.report : Icons.notification_important,
+              size: 18, color: foreground),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  isFinal ? 'Final notice' : 'Payment notice',
+                  style: TextStyle(fontWeight: FontWeight.w600, color: foreground),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '$amount is overdue. Pay by $payBy to avoid restriction of '
+                  'some phone features. Calls, internet and SOS will keep working.',
+                  style: TextStyle(fontSize: 12, color: foreground),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _FinanceCard extends StatelessWidget {
   const _FinanceCard({required this.finance, required this.onChanged});
 
@@ -142,6 +193,12 @@ class _FinanceCard extends StatelessWidget {
                     StatusChip(status: nextDue['status'].toString(), dense: true),
                   ],
                 ),
+              ],
+              if (finance['notice'] is Map &&
+                  finance['device_status'] != 'RESTRICTED') ...[
+                const SizedBox(height: 12),
+                _NoticeBanner(
+                    notice: Map<String, dynamic>.from(finance['notice'] as Map)),
               ],
               if (finance['device_status'] == 'RESTRICTED') ...[
                 const SizedBox(height: 12),

@@ -72,8 +72,9 @@ def issue_restriction_notices(
     First notice once the oldest unpaid instalment is 60 days past due, giving
     21 days to pay. Second notice only after that runs out, giving 7 more.
     Idempotent like the rest of the sweep: one notice of each kind per
-    instalment, ever. Delivery (SMS, WhatsApp, push) is a separate worker that
-    stamps ``delivered_at``.
+    instalment, ever. ``notices.deliver_pending_notices`` sends them; the
+    second notice waits until the first has actually been delivered and its
+    window, counted from delivery, has run out.
     """
     from .devices import oldest_overdue
     from .settings_store import get_setting
@@ -94,7 +95,7 @@ def issue_restriction_notices(
         days_past_due = (as_of - _dt.date.fromisoformat(anchor["due_date"])).days
         existing = {
             r["kind"]: r for r in conn.execute(
-                "SELECT kind, pay_by FROM restriction_notices WHERE emi_id = ?",
+                "SELECT kind, pay_by, delivered_at FROM restriction_notices WHERE emi_id = ?",
                 (anchor["id"],))
         }
         if "FIRST" not in existing:
@@ -103,7 +104,8 @@ def issue_restriction_notices(
                     _issue_notice(conn, actor, fin["id"], anchor["id"], "FIRST",
                                   days_past_due, as_of, first_window))
         elif "SECOND" not in existing:
-            if as_of > _dt.date.fromisoformat(existing["FIRST"]["pay_by"]):
+            first = existing["FIRST"]
+            if first["delivered_at"] and as_of > _dt.date.fromisoformat(first["pay_by"]):
                 issued["SECOND"].append(
                     _issue_notice(conn, actor, fin["id"], anchor["id"], "SECOND",
                                   days_past_due, as_of, second_window))

@@ -2,3 +2,8 @@ data_cache/
 results/
 __pycache__/
 .pytest_cache/
+data_cache_long/
+research_out/
+results_*/
+results_*.log
+.venv/

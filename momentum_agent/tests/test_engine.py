@@ -93,7 +93,7 @@ def test_no_lookahead_fill_is_next_open():
     res = run_backtest(panel, idx, _settings(num_positions=5, max_gap_pct=1.0, slippage_pct=0.0))
     first = res.trades.sort_values("entry_date").iloc[0]
     # Entry must be on the session after a rebalance (weeks end Friday => Monday entry)
-    assert first.entry_date.dayofweek == 0
+    assert first.entry_date.day_of_week == 0
 
 
 def test_stop_loss_exits_at_stop_and_blocks_reentry():
@@ -121,3 +121,43 @@ def test_stop_loss_exits_at_stop_and_blocks_reentry():
     if len(reentries):
         gap = panel["close"].index.get_loc(reentries.entry_date.min()) - panel["close"].index.get_loc(crash_day)
         assert gap >= s.strategy.reentry_cooldown_days
+
+
+def test_cash_yield_accrues_on_idle_cash():
+    panel, idx = _synthetic_panel()
+    flat = {k: pd.DataFrame(100.0, index=v.index, columns=v.columns) for k, v in panel.items()}
+    flat["volume"] = panel["volume"]
+    # Index always falling => regime off => never invested; only the cash yield moves equity.
+    falling = pd.Series(np.linspace(200, 100, len(idx)), index=idx.index)
+    s = _settings(cash_yield=0.0504)
+    res = run_backtest(flat, falling, s)
+    days = len(res.equity)
+    assert res.trades.empty
+    assert res.equity.iloc[-1] == pytest.approx(s.strategy.initial_capital * (1 + 0.0504 / 252) ** days)
+
+
+def test_volatility_target_caps_exposure_and_trims_partially():
+    panel, idx = _synthetic_panel()
+    # Index noise far above target => exposure cap well below 1
+    noisy = idx * (1 + np.random.default_rng(1).normal(0, 0.03, len(idx)))
+    base = _settings(num_positions=5, max_gap_pct=1.0, use_regime_filter=False)
+    full = run_backtest(panel, noisy, base)
+    capped = run_backtest(panel, noisy, dataclasses.replace(
+        base, strategy=dataclasses.replace(base.strategy, target_vol=0.15)))
+    late = slice(len(idx) // 2, None)
+    assert capped.exposure.iloc[late].mean() < 0.6 < full.exposure.iloc[late].mean()
+    trims = capped.trades[capped.trades.reason == "trim"]
+    # A trim is a partial sale: the same position keeps being held afterwards
+    for _, t in trims.head(5).iterrows():
+        later = capped.trades[(capped.trades.symbol == t.symbol) & (capped.trades.entry_date == t.entry_date)
+                              & (capped.trades.exit_date >= t.exit_date)]
+        assert len(later) >= 1
+
+
+def test_regime_exit_sells_everything():
+    panel, idx = _synthetic_panel()
+    s = _settings(num_positions=5, max_gap_pct=1.0, regime_exit=True)
+    crash = idx.copy()
+    crash.iloc[-200:] = crash.iloc[-200] * 0.5  # index far below its 200-DMA for the last 200 days
+    res = run_backtest(panel, crash, s)
+    assert res.exposure.iloc[-50:].max() == 0

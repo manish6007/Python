@@ -14,6 +14,7 @@ class StrategyConfig:
     lookback_weights: tuple = (0.5, 0.5)
     vol_window: int = 252                  # volatility of daily returns used to risk-adjust momentum
     skip_days: int = 0                     # skip the most recent N days (21 = classic "12-1" momentum)
+    lowvol_weight: float = 0.0             # extra weight on z(-volatility): >0 tilts toward calmer stocks (Alpha-LowVol style)
 
     # --- Filters ---
     trend_ma: int = 200                    # stock must close above its own 200-DMA to be bought
@@ -25,10 +26,16 @@ class StrategyConfig:
     # --- Risk ---
     stop_loss_pct: float = 0.10            # hard stop 10% below entry fill (a GTT sell order at Zerodha); None = off
     reentry_cooldown_days: int = 20        # after a stop-out, skip that stock for ~1 month to avoid whipsaws
+    target_vol: float | None = None        # volatility targeting: invest min(1, target_vol / Nifty 63-day vol) of equity; None = off
+    trim_tolerance: float = 0.25           # with target_vol, trim a holding only when it is >25% above its target value
 
     # --- Market regime filter ---
     use_regime_filter: bool = True         # no NEW buys when the index is below its 200-DMA
     regime_ma: int = 200
+    regime_exit: bool = False              # also SELL everything on a rebalance day when the regime is off
+
+    # --- Idle cash ---
+    cash_yield: float = 0.0                # post-tax annual yield on uninvested cash (e.g. parked in a liquid ETF)
 
     # --- Schedule ---
     rebalance: str = "W"                   # "W" weekly (first trading day of week) or "M" monthly

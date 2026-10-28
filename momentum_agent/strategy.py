@@ -22,6 +22,7 @@ class Signals:
     buy_ok: pd.DataFrame     # bool, passes every entry filter
     below_ma: pd.DataFrame   # bool, close below trend MA (exit trigger)
     regime_on: pd.Series     # bool, index above its MA (new buys allowed)
+    exposure_cap: pd.Series | None = None  # fraction of equity to invest (volatility targeting); None = 1.0
 
 
 def _zscore_rows(df: pd.DataFrame) -> pd.DataFrame:
@@ -49,6 +50,8 @@ def compute_signals(panel: dict[str, pd.DataFrame], index_close: pd.Series | Non
         past_ret = close.shift(cfg.skip_days) / close.shift(cfg.skip_days + lookback) - 1
         ratio = (past_ret / vol).where(tradable)
         score += weight * _zscore_rows(ratio)
+    if cfg.lowvol_weight:
+        score += cfg.lowvol_weight * _zscore_rows((-vol).where(tradable))
     score = score.where(tradable)
 
     rank = score.rank(axis=1, ascending=False, method="first")
@@ -61,7 +64,14 @@ def compute_signals(panel: dict[str, pd.DataFrame], index_close: pd.Series | Non
     else:
         regime_on = pd.Series(True, index=close.index)
 
-    return Signals(score=score, rank=rank, buy_ok=buy_ok, below_ma=below_ma, regime_on=regime_on)
+    exposure_cap = None
+    if cfg.target_vol and index_close is not None:
+        idx_rets = index_close.reindex(close.index).ffill().pct_change(fill_method=None)
+        idx_vol = idx_rets.rolling(63, min_periods=40).std() * np.sqrt(252)
+        exposure_cap = (cfg.target_vol / idx_vol).clip(upper=1.0).fillna(1.0)
+
+    return Signals(score=score, rank=rank, buy_ok=buy_ok, below_ma=below_ma, regime_on=regime_on,
+                   exposure_cap=exposure_cap)
 
 
 def rebalance_days(index: pd.DatetimeIndex, freq: str) -> set:
@@ -75,6 +85,8 @@ def select_trades(day, holdings: set, sig: Signals, cfg: StrategyConfig) -> tupl
     """Decide (sells, buys) for a rebalance day. Buys are ordered best-first."""
     rank = sig.rank.loc[day]
     below = sig.below_ma.loc[day]
+    if cfg.regime_exit and not bool(sig.regime_on.loc[day]):
+        return sorted(holdings), []
     sells = []
     for sym in holdings:
         r = rank.get(sym, np.nan)

@@ -15,10 +15,30 @@ def _yahoo_symbol(symbol: str) -> str:
     return symbol if symbol.startswith("^") or "." in symbol else f"{symbol}.NS"
 
 
+def _drop_glitches(df: pd.DataFrame) -> pd.DataFrame:
+    """Blank out bad prints: bars whose close is <0.5x or >2x the 11-day centred median.
+
+    Yahoo has a few of these (e.g. GOLDBEES on 19-20 Dec 2019 at 1/100th of the real price for
+    two days). A real move of that size does not reverse within days, so a centred median is a
+    safe data-cleaning test; it is not used for any trading signal.
+    """
+    if "Close" not in df.columns or len(df) < 11:
+        return df
+    med = df["Close"].rolling(11, center=True, min_periods=5).median()
+    ratio = df["Close"] / med
+    bad = (ratio < 0.5) | (ratio > 2.0)
+    if bad.any():
+        df = df.copy()
+        df.loc[bad, [c for c in ("Open", "Low", "Close") if c in df.columns]] = float("nan")
+        df[[c for c in ("Open", "Low", "Close") if c in df.columns]] = df[
+            [c for c in ("Open", "Low", "Close") if c in df.columns]].ffill()
+    return df
+
+
 def _read_csv(path: Path) -> pd.DataFrame:
     df = pd.read_csv(path, parse_dates=["Date"], index_col="Date")
     df.index = pd.to_datetime(df.index).tz_localize(None)
-    return df.sort_index()
+    return _drop_glitches(df.sort_index())
 
 
 def download_yahoo(symbols, start: str, end: str | None, cache_dir: str = "data_cache",

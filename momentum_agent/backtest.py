@@ -60,6 +60,7 @@ def run_backtest(panel: dict[str, pd.DataFrame], index_close: pd.Series | None,
     positions: dict[str, Position] = {}
     pending_sells: list[str] = []
     pending_buys: list[tuple[str, float]] = []   # (symbol, target rupee value)
+    pending_trims: list[tuple[str, float]] = []  # (symbol, target rupee value) for volatility-targeting trims
     last_close: dict[str, float] = {}
     last_seen: dict[str, pd.Timestamp] = {}
     stopped_until: dict[str, int] = {}           # symbol -> day index before which re-entry is blocked
@@ -69,24 +70,36 @@ def run_backtest(panel: dict[str, pd.DataFrame], index_close: pd.Series | None,
     charges_total = 0.0
     equity_curve, exposure = [], []
 
-    def close_position(sym, price, day, reason):
+    def close_position(sym, price, day, reason, qty=None):
+        """Sell `qty` shares (default: the whole position) and book the realised gain."""
         nonlocal cash, charges_total
-        pos = positions.pop(sym)
-        value = pos.qty * price
+        pos = positions[sym]
+        qty = pos.qty if qty is None or qty >= pos.qty else qty
+        frac = qty / pos.qty
+        cost, stt_paid = pos.cost * frac, pos.stt_paid * frac
+        if qty == pos.qty:
+            positions.pop(sym)
+        else:
+            pos.qty -= qty
+            pos.cost -= cost
+            pos.stt_paid -= stt_paid
+        value = qty * price
         fee = trade_charges("sell", value, sched)
         cash += value - fee
         charges_total += fee
-        pnl = value - fee - pos.cost
-        taxable = pnl + pos.stt_paid + value * sched.stt_pct
+        pnl = value - fee - cost
+        taxable = pnl + stt_paid + value * sched.stt_pct
         held = (day - pos.entry_date).days
         bucket = realized.setdefault(financial_year(day), [0.0, 0.0])
         bucket[1 if held > tax_cfg.long_term_days else 0] += taxable
         trades.append({"symbol": sym, "entry_date": pos.entry_date, "exit_date": day,
-                       "qty": pos.qty, "cost": pos.cost, "proceeds": value - fee,
-                       "pnl": pnl, "return": pnl / pos.cost, "days_held": held, "reason": reason})
+                       "qty": qty, "cost": cost, "proceeds": value - fee,
+                       "pnl": pnl, "return": pnl / cost, "days_held": held, "reason": reason})
 
     for i, day in enumerate(dates):
         day_open, day_low, day_close = opens.loc[day], lows.loc[day], closes.loc[day]
+        if cash > 0 and cfg.cash_yield:
+            cash *= 1 + cfg.cash_yield / 252
 
         # 1. Execute pending orders at the open: sells first, then buys with freed cash.
         still_pending = []
@@ -99,6 +112,16 @@ def run_backtest(panel: dict[str, pd.DataFrame], index_close: pd.Series | None,
                 continue
             close_position(sym, px * (1 - cfg.slippage_pct), day, "signal")
         pending_sells = still_pending
+
+        for sym, target in pending_trims:
+            px = day_open.get(sym, np.nan)
+            if sym not in positions or np.isnan(px):
+                continue
+            fill = px * (1 - cfg.slippage_pct)
+            excess = positions[sym].qty - int(target // fill)
+            if excess > 0:
+                close_position(sym, fill, day, "trim", qty=excess)
+        pending_trims = []
 
         for sym, target in pending_buys:
             px = day_open.get(sym, np.nan)
@@ -155,8 +178,12 @@ def run_backtest(panel: dict[str, pd.DataFrame], index_close: pd.Series | None,
         if day in rebal and i + 1 < len(dates):
             sells, buys = select_trades(day, set(positions), sig, cfg)
             pending_sells = sorted(set(pending_sells) | set(sells))
-            target = equity / cfg.num_positions
+            cap = 1.0 if sig.exposure_cap is None else float(sig.exposure_cap.loc[day])
+            target = equity * cap / cfg.num_positions
             pending_buys = [(s, target) for s in buys if stopped_until.get(s, -1) <= i]
+            if sig.exposure_cap is not None:
+                pending_trims = [(s, target) for s, p in positions.items()
+                                 if s not in sells and p.qty * last_close.get(s, 0) > target * (1 + cfg.trim_tolerance)]
 
     # Settle tax on the final partial FY so the result is truly post-tax.
     if realized:

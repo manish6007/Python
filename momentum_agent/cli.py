@@ -3,6 +3,7 @@
     python -m momentum_agent.cli backtest --years 10 --capital 550000
     python -m momentum_agent.cli backtest --csv-dir my_data/       # use your own OHLCV CSVs
     python -m momentum_agent.cli signals --holdings holdings.csv   # this week's orders
+    python -m momentum_agent.cli allocate --momentum 330000 --gold 110000 --debt 110000  # month-end sleeve check
 """
 import argparse
 import dataclasses
@@ -93,6 +94,32 @@ def cmd_signals(args):
         print(f"  {int(r):>3}. {sym:<12} score {sig.score.loc[day, sym]:+.2f}  [{flag}]")
 
 
+SLEEVES = {"momentum": 0.60, "gold": 0.20, "debt": 0.20}   # see STRATEGY.md for why
+
+
+def cmd_allocate(args):
+    """Month-end check of the 60/20/20 sleeves; only acts when a sleeve drifts past the band."""
+    values = {"momentum": args.momentum, "gold": args.gold, "debt": args.debt}
+    total = sum(values.values()) - args.withdraw
+    if total <= 0:
+        raise SystemExit("Nothing left to allocate.")
+    print(f"Portfolio Rs {sum(values.values()):,.0f}"
+          + (f", withdrawing Rs {args.withdraw:,.0f} this month" if args.withdraw else ""))
+    drift = {k: values[k] / sum(values.values()) - w for k, w in SLEEVES.items()}
+    if not args.withdraw and max(abs(d) for d in drift.values()) < args.band:
+        print(f"All sleeves within +/-{args.band:.0%} of target - no action.")
+        for k, w in SLEEVES.items():
+            print(f"  {k:<9} {values[k] / sum(values.values()):6.1%}  (target {w:.0%})")
+        return
+    print("Move money so each sleeve is back on target:")
+    for k, w in SLEEVES.items():
+        delta = w * total - values[k]
+        verb = "ADD   " if delta > 0 else "REMOVE"
+        print(f"  {k:<9} now Rs {values[k]:>10,.0f}  target Rs {w * total:>10,.0f}  -> {verb} Rs {abs(delta):,.0f}")
+    print("Momentum sleeve: pass the new target as --capital to the next 'signals' run "
+          "(sells/buys there absorb the change). Withdrawals come from whichever sleeve is over target.")
+
+
 def main():
     p = argparse.ArgumentParser(description="NSE delivery momentum strategy")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -112,8 +139,14 @@ def main():
     sub.choices["backtest"].add_argument("--years", type=float, default=10)
     sub.choices["backtest"].add_argument("--out", default="results")
     sub.choices["signals"].add_argument("--holdings", help="CSV with a 'symbol' column")
+    al = sub.add_parser("allocate", help="month-end 60/20/20 sleeve rebalance check")
+    al.add_argument("--momentum", type=float, required=True, help="current value of momentum stocks + their cash")
+    al.add_argument("--gold", type=float, required=True, help="current value of gold ETF")
+    al.add_argument("--debt", type=float, required=True, help="current value of arbitrage/liquid fund")
+    al.add_argument("--withdraw", type=float, default=0.0, help="cash to take out this month (layoff mode)")
+    al.add_argument("--band", type=float, default=0.05, help="rebalance only when a sleeve drifts this far")
     args = p.parse_args()
-    {"backtest": cmd_backtest, "signals": cmd_signals}[args.cmd](args)
+    {"backtest": cmd_backtest, "signals": cmd_signals, "allocate": cmd_allocate}[args.cmd](args)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,8 @@
 # NSE Equity Momentum Agent (delivery only, no F&O)
 
+> **Start with [STRATEGY.md](STRATEGY.md)**: the recommended layoff-resilient 60/20/20
+> momentum + gold + debt plan, the research behind it, and what was tested and rejected.
+
 A rule-based **swing/positional momentum** system for NSE cash equities, with a realistic
 backtester that deducts Zerodha-style delivery charges, slippage and Indian capital-gains
 tax, then reports what "Rs 500–1000 a day" really looks like for the resulting return stream.

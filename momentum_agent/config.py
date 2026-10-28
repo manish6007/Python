@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 @dataclass(frozen=True)
 class StrategyConfig:
     # --- Portfolio ---
-    initial_capital: float = 1_000_000.0   # Rs 10 lakh
+    initial_capital: float = 550_000.0     # Rs 5.5 lakh
     num_positions: int = 10                # hold the top-N ranked stocks, equal weight
     exit_rank: int = 25                    # rank buffer: only sell a holding once it drops below this rank
 
@@ -21,6 +21,10 @@ class StrategyConfig:
     min_price: float = 50.0                # avoid penny stocks
     min_median_turnover: float = 5e7       # median daily traded value over 20 days >= Rs 5 crore
     max_gap_pct: float = 0.15              # ignore stocks with a >15% single-day move in the last 90 days (gappy / event-driven)
+
+    # --- Risk ---
+    stop_loss_pct: float = 0.10            # hard stop 10% below entry fill (a GTT sell order at Zerodha); None = off
+    reentry_cooldown_days: int = 20        # after a stop-out, skip that stock for ~1 month to avoid whipsaws
 
     # --- Market regime filter ---
     use_regime_filter: bool = True         # no NEW buys when the index is below its 200-DMA

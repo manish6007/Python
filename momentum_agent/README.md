@@ -8,13 +8,13 @@ tax, then reports what "Rs 500–1000 a day" really looks like for the resulting
 
 ```bash
 pip install -r momentum_agent/requirements.txt
-python -m momentum_agent.cli backtest --years 10 --capital 1000000      # downloads from Yahoo, caches CSVs
+python -m momentum_agent.cli backtest --years 10 --capital 550000       # downloads from Yahoo, caches CSVs
 python -m momentum_agent.cli backtest --csv-dir my_data/                  # or use your own <SYMBOL>.csv files
-python -m momentum_agent.cli signals --capital 1000000 --holdings holdings.csv   # this week's orders
+python -m momentum_agent.cli signals --capital 550000 --holdings holdings.csv    # this week's orders
 python -m pytest momentum_agent/tests -q
 ```
 
-Useful knobs: `--positions 10 --exit-rank 25 --rebalance W|M --skip-days 21 --no-regime`.
+Useful knobs: `--positions 10 --exit-rank 25 --rebalance W|M --skip-days 21 --stop-loss 0.10 --no-regime`.
 Everything else lives in `config.py`.
 
 ## The strategy (one strategy, chosen on purpose)
@@ -30,9 +30,21 @@ index, Andreas Clenow's *Stocks on the Move*, and decades of academic evidence
 | Entry | Top-10 rank, stock above its 200-DMA, no >15% single-day move in 90 days |
 | Regime filter | No new buys while Nifty 50 is below its 200-DMA (existing positions run) |
 | Exit | Rank falls below 25 (buffer cuts churn) **or** stock closes below its 200-DMA |
-| Sizing | Equal weight: equity / 10 per slot, whole shares |
+| Stop-loss | Hard stop 10% below the entry fill, held as a Zerodha GTT order; no re-entry into that stock for 20 sessions |
+| Sizing | Equal weight: equity / 10 per slot (~Rs 55,000 on Rs 5.5 lakh), whole shares |
 | Schedule | Signals on Friday close, orders at Monday open (no look-ahead) |
 | Product | CNC/delivery only. No intraday, no F&O, no leverage |
+
+## Your routine (Zerodha, 9:30-10:00 IST)
+
+| When | What | Time |
+|---|---|---|
+| Friday evening / weekend | `python -m momentum_agent.cli signals --holdings holdings.csv` | 5 min |
+| Monday 9:30-10:00 | Place the SELLs, then the BUYs (CNC, limit near LTP). For each new fill, place a GTT sell at fill x 0.90 | 15-20 min |
+| Tue-Fri 9:30-10:00 | Check whether any GTT stop fired; if so, update `holdings.csv`. No new trades mid-week | 2-5 min |
+
+Placing orders at 9:30 instead of the 9:15 open is fine for weekly signals; the backtest's
+slippage assumption covers the difference. Avoid the first 15 minutes - spreads are widest then.
 
 ## Research: what top momentum traders actually agree on
 
@@ -62,8 +74,15 @@ A daily target creates pressure to overtrade, which is the main way retail trade
 
 **2. The capital required is the real question.** If the strategy nets ~15–20% a year after
 tax, then Rs 500/day average needs roughly **Rs 6–8 lakh**, Rs 1000/day needs **Rs 12–17 lakh**.
-With Rs 1–2 lakh, hitting Rs 500/day would need 60–125% annual returns — not realistic without
-leverage, which is how accounts blow up. The backtest prints the exact capital needed.
+On the planned **Rs 5.5 lakh**, 15–20% net is Rs 82,000–1,10,000 a year, i.e. **~Rs 330–440 per
+trading day on average**. Rs 500/day needs ~23% net; Rs 1000/day needs ~46%, which no honest
+backtest should promise. Plan: prove the system at Rs 5.5 lakh, then scale capital (and add
+profits back) to reach the target. The backtest prints the exact capital needed.
+
+**2b. The 10% stop-loss is a trade-off, not free protection.** It caps a single position's
+loss at ~Rs 5,500 (1% of capital), which is sensible. But momentum stocks routinely pull back
+10% inside an uptrend, so a fixed stop also cuts some future winners. The backtest will show
+both versions (`--stop-loss 0.10` vs `--stop-loss 0`) so we keep it only if it earns its place.
 
 **3. Expect deep drawdowns.** Indian momentum strategies have historically had 25–35%
 drawdowns (2018 mid-cap crash, March 2020, 2024–25 correction). On Rs 10 lakh that means

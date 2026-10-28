@@ -1,6 +1,6 @@
 """Command line entry point.
 
-    python -m momentum_agent.cli backtest --years 10 --capital 1000000
+    python -m momentum_agent.cli backtest --years 10 --capital 550000
     python -m momentum_agent.cli backtest --csv-dir my_data/       # use your own OHLCV CSVs
     python -m momentum_agent.cli signals --holdings holdings.csv   # this week's orders
 """
@@ -39,6 +39,7 @@ def _settings(args) -> Settings:
     overrides = {k: v for k, v in {
         "initial_capital": args.capital, "num_positions": args.positions,
         "exit_rank": args.exit_rank, "rebalance": args.rebalance, "skip_days": args.skip_days,
+        "stop_loss_pct": args.stop_loss,
     }.items() if v is not None}
     if args.no_regime:
         overrides["use_regime_filter"] = False
@@ -81,7 +82,10 @@ def cmd_signals(args):
     target = cfg.initial_capital / cfg.num_positions
     print(f"\nBUY at next open (Rs {target:,.0f} each):")
     for sym in buys:
-        print(f"  {sym:<12} rank {int(sig.rank.loc[day, sym]):>3}  ~{int(target // close[sym])} sh @ ~{close[sym]:,.2f}")
+        line = f"  {sym:<12} rank {int(sig.rank.loc[day, sym]):>3}  ~{int(target // close[sym])} sh @ ~{close[sym]:,.2f}"
+        if cfg.stop_loss_pct:
+            line += f"  -> after fill, set GTT stop at fill x {1 - cfg.stop_loss_pct:.2f} (~{close[sym] * (1 - cfg.stop_loss_pct):,.2f})"
+        print(line)
     print("\nTop 20 ranking:")
     top = sig.rank.loc[day].dropna().sort_values().head(20)
     for sym, r in top.items():
@@ -99,6 +103,7 @@ def main():
         sp.add_argument("--exit-rank", type=int)
         sp.add_argument("--rebalance", choices=["W", "M"])
         sp.add_argument("--skip-days", type=int)
+        sp.add_argument("--stop-loss", type=float, help="per-trade stop as a fraction, e.g. 0.10; 0 disables")
         sp.add_argument("--no-regime", action="store_true")
         sp.add_argument("--universe-file")
         sp.add_argument("--csv-dir", help="folder of <SYMBOL>.csv files instead of downloading")

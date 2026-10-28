@@ -2,9 +2,11 @@
 
 Timeline for each trading day:
   1. Execute orders decided at the previous rebalance close, at today's OPEN (+/- slippage).
-  2. Mark the portfolio to today's CLOSE.
-  3. On the last trading day of an Indian FY (Apr-Mar), pay capital-gains tax from cash.
-  4. On a rebalance day, compute next session's orders from today's close.
+  2. Stop-loss: if today's LOW touches a holding's stop, exit at the stop (or at the open if it
+     gapped below the stop) - this mirrors a GTT stop order sitting with the broker.
+  3. Mark the portfolio to today's CLOSE.
+  4. On the last trading day of an Indian FY (Apr-Mar), pay capital-gains tax from cash.
+  5. On a rebalance day, compute next session's orders from today's close.
 """
 from dataclasses import dataclass, field
 
@@ -24,6 +26,7 @@ class Position:
     cost: float          # total rupees paid incl. charges
     entry_date: pd.Timestamp
     stt_paid: float = 0.0  # STT is not deductible when computing capital gains
+    stop_price: float = 0.0
 
 
 @dataclass
@@ -43,6 +46,8 @@ def run_backtest(panel: dict[str, pd.DataFrame], index_close: pd.Series | None,
     sig = compute_signals(panel, index_close, cfg)
 
     opens, closes = panel["open"], panel["close"]
+    lows = panel.get("low")
+    lows = closes if lows is None or lows.empty else lows.reindex_like(closes)
     dates = closes.index
     if start:
         dates = dates[dates >= pd.Timestamp(start)]
@@ -57,6 +62,7 @@ def run_backtest(panel: dict[str, pd.DataFrame], index_close: pd.Series | None,
     pending_buys: list[tuple[str, float]] = []   # (symbol, target rupee value)
     last_close: dict[str, float] = {}
     last_seen: dict[str, pd.Timestamp] = {}
+    stopped_until: dict[str, int] = {}           # symbol -> day index before which re-entry is blocked
     realized: dict[int, list[float]] = {}        # FY -> [st_net, lt_net]
     tax_state = TaxState()
     trades, taxes = [], {}
@@ -80,7 +86,7 @@ def run_backtest(panel: dict[str, pd.DataFrame], index_close: pd.Series | None,
                        "pnl": pnl, "return": pnl / pos.cost, "days_held": held, "reason": reason})
 
     for i, day in enumerate(dates):
-        day_open, day_close = opens.loc[day], closes.loc[day]
+        day_open, day_low, day_close = opens.loc[day], lows.loc[day], closes.loc[day]
 
         # 1. Execute pending orders at the open: sells first, then buys with freed cash.
         still_pending = []
@@ -109,11 +115,21 @@ def run_backtest(panel: dict[str, pd.DataFrame], index_close: pd.Series | None,
                 continue
             cash -= value + fee
             charges_total += fee
+            stop = fill * (1 - cfg.stop_loss_pct) if cfg.stop_loss_pct else 0.0
             positions[sym] = Position(qty=qty, cost=value + fee, entry_date=day,
-                                     stt_paid=value * sched.stt_pct)
+                                     stt_paid=value * sched.stt_pct, stop_price=stop)
         pending_buys = []
 
-        # 2. Mark to market (carry last price through missing bars) and liquidate stale names.
+        # 2. Stop-losses.
+        for sym in list(positions):
+            stop = positions[sym].stop_price
+            low = day_low.get(sym, np.nan)
+            if stop and not np.isnan(low) and low <= stop:
+                px = min(day_open.get(sym, stop), stop)
+                close_position(sym, px * (1 - cfg.slippage_pct), day, "stop-loss")
+                stopped_until[sym] = i + cfg.reentry_cooldown_days
+
+        # 3. Mark to market (carry last price through missing bars) and liquidate stale names.
         for sym in list(positions):
             px = day_close.get(sym, np.nan)
             if not np.isnan(px):
@@ -122,7 +138,7 @@ def run_backtest(panel: dict[str, pd.DataFrame], index_close: pd.Series | None,
                 close_position(sym, last_close[sym] * 0.9, day, "stale-data")  # 10% haircut
         invested = sum(p.qty * last_close.get(s, p.cost / p.qty) for s, p in positions.items())
 
-        # 3. Pay tax at FY end.
+        # 4. Pay tax at FY end.
         if day in fy_last_day:
             fy = financial_year(day)
             st_net, lt_net = realized.pop(fy, [0.0, 0.0])
@@ -135,12 +151,12 @@ def run_backtest(panel: dict[str, pd.DataFrame], index_close: pd.Series | None,
         equity_curve.append(equity)
         exposure.append(invested / equity if equity > 0 else 0.0)
 
-        # 4. Rebalance: decide orders for the next session.
+        # 5. Rebalance: decide orders for the next session.
         if day in rebal and i + 1 < len(dates):
             sells, buys = select_trades(day, set(positions), sig, cfg)
             pending_sells = sorted(set(pending_sells) | set(sells))
             target = equity / cfg.num_positions
-            pending_buys = [(s, target) for s in buys]
+            pending_buys = [(s, target) for s in buys if stopped_until.get(s, -1) <= i]
 
     # Settle tax on the final partial FY so the result is truly post-tax.
     if realized:

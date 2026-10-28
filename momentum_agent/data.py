@@ -1,14 +1,14 @@
 """Price data: download daily OHLCV from Yahoo Finance (cached to CSV) or load your own CSVs.
 
 Each source ends up as a dict of wide DataFrames (index = date, columns = symbol):
-    {"open": ..., "close": ..., "volume": ...}
+    {"open": ..., "low": ..., "close": ..., "volume": ...}
 Prices are split/dividend adjusted.
 """
 from pathlib import Path
 
 import pandas as pd
 
-FIELDS = ("Open", "Close", "Volume")
+FIELDS = ("Open", "Low", "Close", "Volume")
 
 
 def _yahoo_symbol(symbol: str) -> str:

@@ -94,3 +94,30 @@ def test_no_lookahead_fill_is_next_open():
     first = res.trades.sort_values("entry_date").iloc[0]
     # Entry must be on the session after a rebalance (weeks end Friday => Monday entry)
     assert first.entry_date.dayofweek == 0
+
+
+def test_stop_loss_exits_at_stop_and_blocks_reentry():
+    panel, idx = _synthetic_panel()
+    s = _settings(num_positions=5, max_gap_pct=1.0, slippage_pct=0.0, stop_loss_pct=0.10)
+    base = run_backtest(panel, idx, s)
+    first = base.trades.sort_values("entry_date").iloc[0]
+    sym, entry = first.symbol, first.entry_date
+
+    # Crash that stock 30% intraday (low only) two sessions after entry; it closes unchanged.
+    crash_day = panel["close"].index[panel["close"].index.get_loc(entry) + 2]
+    panel = {k: v.copy() for k, v in panel.items()}
+    panel["low"] = panel["close"].copy()
+    panel["low"].loc[crash_day, sym] = panel["open"].loc[crash_day, sym] * 0.7
+
+    res = run_backtest(panel, idx, s)
+    stops = res.trades[res.trades.reason == "stop-loss"]
+    hit = stops[(stops.symbol == sym) & (stops.exit_date == crash_day)]
+    assert len(hit) == 1
+    entry_fill = panel["open"].loc[entry, sym]
+    exit_px = hit.iloc[0].proceeds / hit.iloc[0].qty
+    assert exit_px == pytest.approx(entry_fill * 0.90, rel=0.002)  # stop price, minus sell charges
+    # Not re-bought within the cooldown window
+    reentries = res.trades[(res.trades.symbol == sym) & (res.trades.entry_date > crash_day)]
+    if len(reentries):
+        gap = panel["close"].index.get_loc(reentries.entry_date.min()) - panel["close"].index.get_loc(crash_day)
+        assert gap >= s.strategy.reentry_cooldown_days

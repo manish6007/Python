@@ -83,6 +83,17 @@ def approve_action(command_id: str, actor: Actor = Depends(AdminActor),
     return {"approval": approval, "dispatch": dispatch}
 
 
+@router.get("/admin/unlock-monitor")
+def unlock_monitor(actor: Actor = Depends(AdminActor),
+                   conn: sqlite3.Connection = Depends(get_conn)):
+    """Unlocks still unconfirmed after 30 minutes. Poll it every few minutes.
+
+    A customer who has paid is owed an unlock within the hour; this is the
+    list someone must act on before compensation starts to accrue.
+    """
+    return {"waiting": devices_mod.unlock_monitor(conn)}
+
+
 @router.get("/devices/{device_id}/commands")
 def device_commands(device_id: str, actor: Actor = Depends(AdminActor),
                     conn: sqlite3.Connection = Depends(get_conn)):

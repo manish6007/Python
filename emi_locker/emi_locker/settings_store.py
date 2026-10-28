@@ -28,6 +28,33 @@ KNOWN_SETTINGS: Dict[str, Any] = {
     "finance.default_late_fee_paise": (0, "Late fee applied once an EMI is overdue"),
     "business.name": ("Ashish Enterprises", "Shown on receipts and certificates"),
     "business.support_mobile": ("", "Support number shown in the apps"),
+    # Device restriction timing, from the RBI draft amendment of May 2026.
+    "restriction.min_days_past_due": (
+        90, "A phone can be restricted only this many days after the oldest unpaid EMI"),
+    "restriction.first_notice_days_past_due": (
+        60, "Days past due when the first restriction notice goes out"),
+    "restriction.first_notice_window_days": (
+        21, "Days the first notice gives the customer to pay"),
+    "restriction.second_notice_window_days": (
+        7, "Days the second notice gives the customer to pay"),
+    "restriction.unlock_limit_minutes": (
+        60, "Minutes allowed to unlock a phone after the arrears are paid"),
+    "restriction.late_unlock_compensation_paise_per_hour": (
+        25000, "Owed to the customer for each started hour an unlock is late"),
+}
+
+# The RBI draft sets these as minimums or maximums. An admin may be stricter
+# with the customer's interest, never looser, so a settings screen cannot
+# switch the protections off.
+SETTING_FLOORS: Dict[str, int] = {
+    "restriction.min_days_past_due": 90,
+    "restriction.first_notice_days_past_due": 60,
+    "restriction.first_notice_window_days": 21,
+    "restriction.second_notice_window_days": 7,
+    "restriction.late_unlock_compensation_paise_per_hour": 25000,
+}
+SETTING_CEILINGS: Dict[str, int] = {
+    "restriction.unlock_limit_minutes": 60,
 }
 
 
@@ -65,6 +92,12 @@ def set_setting(conn: sqlite3.Connection, actor: Actor, key: str, value: Any) ->
         value = int(value)
         if value < 0:
             raise ValidationError("%s cannot be negative" % key)
+        if key in SETTING_FLOORS and value < SETTING_FLOORS[key]:
+            raise ValidationError("%s cannot be below %d (RBI draft minimum)"
+                                  % (key, SETTING_FLOORS[key]))
+        if key in SETTING_CEILINGS and value > SETTING_CEILINGS[key]:
+            raise ValidationError("%s cannot be above %d (RBI draft maximum)"
+                                  % (key, SETTING_CEILINGS[key]))
     elif isinstance(default, str) and not isinstance(value, str):
         raise ValidationError("%s expects text" % key)
 

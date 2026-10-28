@@ -180,10 +180,31 @@ def main() -> None:  # noqa: C901 - a linear narrative reads better unsplit
             row["finance_id"], row["overdue_count"],
             format_inr(row["overdue_amount"]), row["days_past_due"]))
 
-    line("11. Restriction needs eligibility, a reason and a second approver")
+    line("11. Restriction waits for 90 days, two notices, a reason and a second approver")
+    try:
+        with tx(conn):
+            devices_mod.request_command(conn, ops, device_id, "RESTRICT",
+                                        reason="EMI 3 overdue", as_of=as_of)
+    except DomainError as exc:
+        print("restriction on %s refused: %s" % (as_of, exc))
+    # Walk the calendar the way the nightly job would, until the rules allow it.
+    while not devices_mod.eligibility_for_restriction(conn, device_id, as_of)["eligible"]:
+        as_of += _dt.timedelta(days=1)
+        with tx(conn):
+            moved = lifecycle.run_daily_status_sweep(conn, ops, as_of=as_of)
+        for kind in ("NOTICE_FIRST", "NOTICE_SECOND"):
+            if moved[kind]:
+                notice = conn.execute(
+                    "SELECT days_past_due, pay_by FROM restriction_notices WHERE id = ?",
+                    (moved[kind][0],)).fetchone()
+                print("%s: %s issued at %d days past due, pay by %s" % (
+                    as_of, kind.lower().replace("_", " "), notice["days_past_due"],
+                    notice["pay_by"]))
+    print("%s: eligible for restriction" % as_of)
     with tx(conn):
         cmd = devices_mod.request_command(conn, ops, device_id, "RESTRICT",
-                                          reason="EMI 3 overdue beyond grace period")
+                                          reason="EMI 3 overdue, both notices expired",
+                                          as_of=as_of)
     print("command %s -> %s" % (cmd["command_id"], cmd["status"]))
     try:
         with tx(conn):
@@ -192,12 +213,18 @@ def main() -> None:  # noqa: C901 - a linear narrative reads better unsplit
         print("self-approval blocked: [%s] %s" % (exc.code, exc))
     with tx(conn):
         devices_mod.approve_command(conn, admin, cmd["command_id"])
-        sent = devices_mod.send_to_provider(conn, admin, cmd["command_id"], DemoProvider())
+        sent = devices_mod.send_to_provider(conn, admin, cmd["command_id"], DemoProvider(),
+                                            as_of=as_of)
     print("dispatch -> %s via %s (%s)" % (sent["status"], sent["provider"], sent["detail"]))
 
     line("12. Customer clears the arrears; the device is restored")
     with tx(conn):
-        payments.record_cash_collection(conn, retailer, finance_id, rupees(2000))
+        for emi in conn.execute(
+            "SELECT id, amount_paise FROM emi_schedules WHERE finance_id = ?"
+            " AND status = 'OVERDUE' ORDER BY seq", (finance_id,)
+        ).fetchall():
+            payments.record_cash_collection(conn, retailer, finance_id, emi["amount_paise"],
+                                            emi_id=emi["id"])
         lifecycle.run_daily_status_sweep(conn, ops, as_of=as_of)
         restored = devices_mod.restore_on_payment(conn, ops, finance_id, DemoProvider())
     print("restore command:", restored)

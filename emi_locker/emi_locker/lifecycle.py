@@ -57,7 +57,76 @@ def run_daily_status_sweep(
     # Roll the finance and its device up to the worst state among instalments.
     for finance_id in {r["finance_id"] for r in rows}:
         _sync_account_state(conn, actor, finance_id)
+
+    notices = issue_restriction_notices(conn, actor, as_of)
+    moved["NOTICE_FIRST"] = notices["FIRST"]
+    moved["NOTICE_SECOND"] = notices["SECOND"]
     return moved
+
+
+def issue_restriction_notices(
+    conn: sqlite3.Connection, actor: Optional[Actor] = None, as_of: Optional[_dt.date] = None
+) -> Dict[str, List[str]]:
+    """Raise the two notices a restriction must wait out (RBI draft, May 2026).
+
+    First notice once the oldest unpaid instalment is 60 days past due, giving
+    21 days to pay. Second notice only after that runs out, giving 7 more.
+    Idempotent like the rest of the sweep: one notice of each kind per
+    instalment, ever. Delivery (SMS, WhatsApp, push) is a separate worker that
+    stamps ``delivered_at``.
+    """
+    from .devices import oldest_overdue
+    from .settings_store import get_setting
+
+    as_of = as_of or today()
+    first_at = get_setting(conn, "restriction.first_notice_days_past_due")
+    first_window = get_setting(conn, "restriction.first_notice_window_days")
+    second_window = get_setting(conn, "restriction.second_notice_window_days")
+    issued: Dict[str, List[str]] = {"FIRST": [], "SECOND": []}
+
+    finances = conn.execute(
+        "SELECT DISTINCT f.id FROM finance_accounts f JOIN emi_schedules e"
+        " ON e.finance_id = f.id WHERE e.status = 'OVERDUE'"
+        " AND f.status NOT IN ('COMPLETED','CANCELLED')",
+    ).fetchall()
+    for fin in finances:
+        anchor = oldest_overdue(conn, fin["id"])
+        days_past_due = (as_of - _dt.date.fromisoformat(anchor["due_date"])).days
+        existing = {
+            r["kind"]: r for r in conn.execute(
+                "SELECT kind, pay_by FROM restriction_notices WHERE emi_id = ?",
+                (anchor["id"],))
+        }
+        if "FIRST" not in existing:
+            if days_past_due >= first_at:
+                issued["FIRST"].append(
+                    _issue_notice(conn, actor, fin["id"], anchor["id"], "FIRST",
+                                  days_past_due, as_of, first_window))
+        elif "SECOND" not in existing:
+            if as_of > _dt.date.fromisoformat(existing["FIRST"]["pay_by"]):
+                issued["SECOND"].append(
+                    _issue_notice(conn, actor, fin["id"], anchor["id"], "SECOND",
+                                  days_past_due, as_of, second_window))
+    return issued
+
+
+def _issue_notice(
+    conn: sqlite3.Connection, actor: Optional[Actor], finance_id: str, emi_id: str,
+    kind: str, days_past_due: int, as_of: _dt.date, window_days: int,
+) -> str:
+    from .core import next_id
+
+    notice_id = next_id(conn, "notice")
+    pay_by = (as_of + _dt.timedelta(days=window_days)).isoformat()
+    conn.execute(
+        "INSERT INTO restriction_notices(id, finance_id, emi_id, kind, days_past_due,"
+        " issued_on, pay_by, created_at) VALUES (?,?,?,?,?,?,?,?)",
+        (notice_id, finance_id, emi_id, kind, days_past_due, as_of.isoformat(), pay_by, now()),
+    )
+    audit(conn, actor, "finance.restriction_notice", "restriction_notice", notice_id,
+          after={"finance_id": finance_id, "kind": kind, "days_past_due": days_past_due,
+                 "pay_by": pay_by})
+    return notice_id
 
 
 def _sync_account_state(
@@ -172,10 +241,11 @@ def settle_finance_if_complete(
             "UPDATE devices SET status = 'COMPLETED' WHERE id = ?", (fin["device_id"],)
         )
         if prior == "RESTRICTED":
-            from .devices import request_command
+            from .devices import open_unlock_obligation, request_command
 
-            request_command(conn, actor, fin["device_id"], "RELEASE",
-                            reason="finance completed", auto_approve=True)
+            cmd = request_command(conn, actor, fin["device_id"], "RELEASE",
+                                  reason="finance completed", auto_approve=True)
+            open_unlock_obligation(conn, cmd["command_id"])
     audit(conn, actor, "finance.completed", "finance_account", finance_id,
           before={"status": fin["status"]}, after={"status": "COMPLETED"})
     return {"completed": True, "outstanding": 0}

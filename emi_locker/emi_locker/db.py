@@ -309,6 +309,35 @@ CREATE TABLE IF NOT EXISTS device_command_logs (
     created_at TEXT NOT NULL
 );
 
+-- Pre-restriction notices (RBI draft, May 2026). Keyed to the oldest overdue
+-- instalment, so a fresh default after the arrears clear needs fresh notices.
+CREATE TABLE IF NOT EXISTS restriction_notices (
+    id            TEXT PRIMARY KEY,
+    finance_id    TEXT NOT NULL REFERENCES finance_accounts(id),
+    emi_id        TEXT NOT NULL REFERENCES emi_schedules(id),
+    kind          TEXT NOT NULL CHECK (kind IN ('FIRST','SECOND')),
+    days_past_due INTEGER NOT NULL,
+    issued_on     TEXT NOT NULL,
+    pay_by        TEXT NOT NULL,
+    -- Set by whatever delivers the SMS / WhatsApp / push; NULL until then.
+    delivered_at  TEXT,
+    created_at    TEXT NOT NULL,
+    UNIQUE (emi_id, kind)
+);
+
+-- Every unlock owed to a customer, timed against the one-hour limit. The
+-- compensation column is the ledger of what is owed for a late unlock.
+CREATE TABLE IF NOT EXISTS unlock_obligations (
+    id                 TEXT PRIMARY KEY,
+    device_id          TEXT NOT NULL REFERENCES devices(id),
+    finance_id         TEXT NOT NULL REFERENCES finance_accounts(id),
+    command_id         TEXT NOT NULL UNIQUE REFERENCES device_commands(id),
+    triggered_at       TEXT NOT NULL,
+    due_by             TEXT NOT NULL,
+    confirmed_at       TEXT,
+    compensation_paise INTEGER NOT NULL DEFAULT 0 CHECK (compensation_paise >= 0)
+);
+
 CREATE TABLE IF NOT EXISTS auth_otps (
     mobile       TEXT PRIMARY KEY,
     code_hash    TEXT NOT NULL,
@@ -348,7 +377,10 @@ ADDITIVE_MIGRATIONS = (
 
 
 def migrate(conn: sqlite3.Connection) -> None:
-    """Add any column a newer release introduced. Safe to run every time."""
+    """Add any table or column a newer release introduced. Safe to run every time."""
+    # Every statement in SCHEMA is IF NOT EXISTS, so this only creates what an
+    # older database is missing - new tables such as restriction_notices.
+    conn.executescript(SCHEMA)
     for table, column, definition in ADDITIVE_MIGRATIONS:
         existing = {row[1] for row in conn.execute("PRAGMA table_info(%s)" % table)}
         if column not in existing:
@@ -356,7 +388,6 @@ def migrate(conn: sqlite3.Connection) -> None:
 
 
 def init_schema(conn: sqlite3.Connection) -> None:
-    conn.executescript(SCHEMA)
     migrate(conn)
 
 

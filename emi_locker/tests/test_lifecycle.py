@@ -53,7 +53,8 @@ def test_sweep_is_idempotent():
     first = sweep(world, as_of)
     second = sweep(world, as_of)
     assert first["OVERDUE"]
-    assert second == {"DUE": [], "GRACE_PERIOD": [], "OVERDUE": []}
+    assert second == {"DUE": [], "GRACE_PERIOD": [], "OVERDUE": [],
+                      "NOTICE_FIRST": [], "NOTICE_SECOND": []}
 
 
 def test_account_and_device_follow_the_worst_instalment():
@@ -137,5 +138,6 @@ def test_completed_finance_stops_generating_reminders():
             payments.record_cash_collection(conn, world["retailer"], result["finance_id"],
                                             rupees(2000))
     moved = sweep(world, _dt.date(2026, 6, 10))
-    assert moved == {"DUE": [], "GRACE_PERIOD": [], "OVERDUE": []}
+    assert moved == {"DUE": [], "GRACE_PERIOD": [], "OVERDUE": [],
+                      "NOTICE_FIRST": [], "NOTICE_SECOND": []}
     assert lifecycle.due_reminders(conn, as_of=_dt.date(2026, 6, 10)) == []

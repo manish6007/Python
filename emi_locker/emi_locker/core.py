@@ -27,6 +27,8 @@ ID_PREFIXES = {
     "consent": "CNS",
     "collection": "COL",
     "command": "CMD",
+    "notice": "NTC",
+    "unlock": "UNL",
 }
 
 

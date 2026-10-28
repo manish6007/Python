@@ -16,7 +16,11 @@ class ApiException implements Exception {
   final String message;
   final int? statusCode;
 
-  bool get isAuthError => statusCode == 401 || statusCode == 403;
+  /// The session is gone and only signing in again will help.
+  ///
+  /// 401 only. The backend answers 403 for "you may not do this", which must
+  /// not throw anyone out of the app.
+  bool get isAuthError => statusCode == 401;
 
   @override
   String toString() => message;
@@ -53,6 +57,11 @@ class ApiClient {
 
   /// Set once at sign-in and cleared on sign-out.
   String? token;
+
+  /// Called when the server rejects [token] itself: expired, ended from
+  /// another device, or the account suspended. The session uses it to sign
+  /// out from whichever screen made the request.
+  void Function(String message)? onSessionInvalid;
 
   Map<String, String> _headers({String? idempotencyKey}) => {
         'Content-Type': 'application/json',
@@ -124,11 +133,17 @@ class ApiClient {
     }
 
     if (decoded is Map && decoded['message'] != null) {
-      throw ApiException(
+      final error = ApiException(
         decoded['error']?.toString() ?? 'ERROR',
         decoded['message'].toString(),
         statusCode: response.statusCode,
       );
+      // Only with a token: a 401 while signing in is about the code, not a
+      // session.
+      if (error.isAuthError && token != null) {
+        onSessionInvalid?.call(error.message);
+      }
+      throw error;
     }
     // FastAPI's own validation errors come back under `detail`.
     if (decoded is Map && decoded['detail'] != null) {

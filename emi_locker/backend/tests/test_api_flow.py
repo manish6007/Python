@@ -103,13 +103,13 @@ def test_unknown_mobile_does_not_reveal_itself(client):
 
 
 def test_endpoints_need_a_token(client):
-    assert client.get("/retailer/dashboard").status_code == 403
-    assert client.get("/me/finances").status_code == 403
+    assert client.get("/retailer/dashboard").status_code == 401
+    assert client.get("/me/finances").status_code == 401
 
 
 def test_garbage_token_is_rejected(client):
     r = client.get("/retailer/dashboard", headers=auth("not.a.token"))
-    assert r.status_code == 403
+    assert r.status_code == 401
 
 
 # ------------------------------------------------------------ retailer flows

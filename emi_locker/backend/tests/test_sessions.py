@@ -88,11 +88,11 @@ def test_a_customer_can_end_every_session_after_losing_a_handset(client):
     assert out.status_code == 200
 
     blocked = client.get("/me/finances", headers=auth(stolen))
-    assert blocked.status_code == 403
+    assert blocked.status_code == 401
     assert "sign in again" in blocked.json()["message"]
 
     # The token used to do it is ended too, so there is no session left behind.
-    assert client.get("/me/finances", headers=auth(replacement)).status_code == 403
+    assert client.get("/me/finances", headers=auth(replacement)).status_code == 401
 
     # And signing in afresh works normally.
     assert client.get("/me/finances",
@@ -115,14 +115,14 @@ def test_suspending_an_account_does_not_leave_revivable_tokens(client):
 
     client.post("/admin/users/%s/status" % sharma["id"], headers=admin,
                 json={"status": "SUSPENDED", "reason": "cash reconciliation"})
-    assert client.get("/retailer/dashboard", headers=auth(retailer)).status_code == 403
+    assert client.get("/retailer/dashboard", headers=auth(retailer)).status_code == 401
 
     client.post("/admin/users/%s/status" % sharma["id"], headers=admin,
                 json={"status": "ACTIVE", "reason": "resolved"})
 
     # The old token stays dead; they have to sign in again.
     revived = client.get("/retailer/dashboard", headers=auth(retailer))
-    assert revived.status_code == 403
+    assert revived.status_code == 401
     assert client.get("/retailer/dashboard",
                       headers=auth(login(client, RETAILER_MOBILE))).status_code == 200
 
@@ -133,11 +133,11 @@ def test_a_forged_epoch_does_not_survive_the_signature(client):
     claims["epoch"] = 99
     forged = jwt.encode(claims, "not-the-real-secret", algorithm="HS256")
     assert client.get("/me/finances",
-                      headers={"Authorization": "Bearer %s" % forged}).status_code == 403
+                      headers={"Authorization": "Bearer %s" % forged}).status_code == 401
 
 
 def test_sign_out_everywhere_needs_a_session_of_its_own(client):
-    assert client.post("/auth/sign-out-everywhere").status_code == 403
+    assert client.post("/auth/sign-out-everywhere").status_code == 401
 
 
 # ---------------------------------------------------------------- migration
@@ -166,3 +166,20 @@ def test_an_older_database_gains_the_new_column_on_open():
         for suffix in ("", "-wal", "-shm"):
             if os.path.exists(path + suffix):
                 os.unlink(path + suffix)
+
+
+def test_a_dead_session_is_401_and_a_refusal_is_403(client):
+    """The app signs out on 401 and only on 401.
+
+    If "you may not do this" shared a status with "your session is gone", a
+    customer opening a retailer screen would be thrown out of the app.
+    """
+    token = login(client, CUSTOMER_MOBILE)
+    refused = client.get("/retailer/dashboard", headers=auth(token))
+    assert refused.status_code == 403
+    assert refused.json()["error"] == "PERMISSION_DENIED"
+
+    client.post("/auth/sign-out-everywhere", headers=auth(token))
+    ended = client.get("/me/finances", headers=auth(token))
+    assert ended.status_code == 401
+    assert ended.json()["error"] == "SESSION_INVALID"

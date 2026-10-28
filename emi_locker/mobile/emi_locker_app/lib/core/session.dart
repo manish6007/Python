@@ -11,9 +11,15 @@ import 'api_client.dart';
 /// on every launch. That is fine for local testing; a production build should
 /// move it to the Android Keystore via flutter_secure_storage.
 class Session extends ChangeNotifier {
-  Session(this.api);
+  Session(this.api) {
+    api.onSessionInvalid = _endedByServer;
+  }
 
   final ApiClient api;
+
+  /// Why the server ended the last session, for the sign-in screen to say.
+  /// Null after an ordinary sign-out.
+  String? endedMessage;
 
   static const _tokenKey = 'emi.token';
   static const _userKey = 'emi.user';
@@ -49,8 +55,11 @@ class Session extends ChangeNotifier {
         // may have been suspended since the last launch.
         _user = Map<String, dynamic>.from(await api.get('/auth/me') as Map);
         await prefs.setString(_userKey, jsonEncode(_user));
-      } on ApiException {
-        await _clear(prefs);
+      } on ApiException catch (error) {
+        // Only the server saying no ends the session. An unreachable server
+        // keeps the saved sign-in: with month-long sessions, one launch on a
+        // bad signal must not cost a new SMS code.
+        if (error.isAuthError) await _clear(prefs);
       }
     }
     _restoring = false;
@@ -60,6 +69,7 @@ class Session extends ChangeNotifier {
   Future<void> signIn(String token, Map<String, dynamic> user) async {
     api.token = token;
     _user = user;
+    endedMessage = null;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_tokenKey, token);
     await prefs.setString(_userKey, jsonEncode(user));
@@ -67,6 +77,15 @@ class Session extends ChangeNotifier {
   }
 
   Future<void> signOut() async {
+    endedMessage = null;
+    await _clear(await SharedPreferences.getInstance());
+    notifyListeners();
+  }
+
+  Future<void> _endedByServer(String message) async {
+    // During restore() the saved user is not shown yet; restore clears it.
+    if (_restoring || _user == null) return;
+    endedMessage = message;
     await _clear(await SharedPreferences.getInstance());
     notifyListeners();
   }

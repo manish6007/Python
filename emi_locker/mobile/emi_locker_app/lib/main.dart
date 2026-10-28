@@ -35,11 +35,37 @@ class EmiLockerApp extends StatefulWidget {
 
 class _EmiLockerAppState extends State<EmiLockerApp> {
   late final Session _session = Session(widget.api);
+  final _navigatorKey = GlobalKey<NavigatorState>();
+  final _messengerKey = GlobalKey<ScaffoldMessengerState>();
+  bool _wasSignedIn = false;
 
   @override
   void initState() {
     super.initState();
+    _session.addListener(_onSessionChanged);
     _session.restore();
+  }
+
+  @override
+  void dispose() {
+    _session.removeListener(_onSessionChanged);
+    super.dispose();
+  }
+
+  void _onSessionChanged() {
+    final signedIn = _session.isSignedIn;
+    if (_wasSignedIn && !signedIn) {
+      // `home` swaps to the sign-in screen, but anything pushed on top of the
+      // shell - a finance, a customer - would stay up over it.
+      _navigatorKey.currentState?.popUntil((route) => route.isFirst);
+      final message = _session.endedMessage;
+      if (message != null) {
+        _messengerKey.currentState
+          ?..hideCurrentSnackBar()
+          ..showSnackBar(SnackBar(content: Text(message)));
+      }
+    }
+    _wasSignedIn = signedIn;
   }
 
   @override
@@ -51,6 +77,8 @@ class _EmiLockerAppState extends State<EmiLockerApp> {
     return SessionScope(
       session: _session,
       child: MaterialApp(
+        navigatorKey: _navigatorKey,
+        scaffoldMessengerKey: _messengerKey,
         title: 'EMI Locker',
         debugShowCheckedModeBanner: false,
         theme: AppTheme.light(),

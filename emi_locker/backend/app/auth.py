@@ -28,7 +28,7 @@ from typing import Any, Dict, Optional
 import jwt
 
 from emi_locker.core import Actor
-from emi_locker.errors import PermissionDenied, ValidationError
+from emi_locker.errors import PermissionDenied, SessionInvalid, ValidationError
 
 from .config import settings
 from .notifications import build_channel
@@ -188,18 +188,23 @@ def actor_from_token(conn: sqlite3.Connection, token: str) -> Actor:
     try:
         payload = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
     except jwt.ExpiredSignatureError:
-        raise PermissionDenied("session expired, please sign in again")
+        raise SessionInvalid("session expired, please sign in again")
     except jwt.InvalidTokenError:
-        raise PermissionDenied("invalid session token")
+        raise SessionInvalid("invalid session token")
 
     # Reload from the database: a token issued before a suspension must not
-    # keep working just because it has not expired yet.
-    actor = Actor.load(conn, payload["sub"])
+    # keep working just because it has not expired yet. A suspended or unknown
+    # account is a dead session, not a permission question.
+    try:
+        actor = Actor.load(conn, payload["sub"])
+    except PermissionDenied:
+        # Actor.load names the user id and status; the app shows this verbatim.
+        raise SessionInvalid("this account is not active")
 
     row = conn.execute(
         "SELECT session_epoch FROM users WHERE id = ?", (payload["sub"],)).fetchone()
     if row is not None and payload.get("epoch", 0) != row["session_epoch"]:
-        raise PermissionDenied("this session was ended, please sign in again")
+        raise SessionInvalid("this session was ended, please sign in again")
     return actor
 
 

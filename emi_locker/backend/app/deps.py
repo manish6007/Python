@@ -8,7 +8,7 @@ from fastapi import Depends, Header, Request
 
 from emi_locker.core import Actor
 from emi_locker.db import file_db
-from emi_locker.errors import PermissionDenied
+from emi_locker.errors import PermissionDenied, SessionInvalid
 
 from .auth import actor_from_token
 
@@ -36,7 +36,7 @@ def current_actor(
     authorization: str = Header(default=""),
 ) -> Actor:
     if not authorization.lower().startswith("bearer "):
-        raise PermissionDenied("sign in to continue")
+        raise SessionInvalid("sign in to continue")
     return actor_from_token(conn, authorization[7:].strip())
 
 

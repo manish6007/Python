@@ -196,8 +196,8 @@ def test_suspending_an_account_invalidates_its_existing_token(client):
     assert out.status_code == 200
 
     blocked = client.get("/retailer/dashboard", headers=retailer_headers)
-    assert blocked.status_code == 403
-    assert "SUSPENDED" in blocked.json()["message"]
+    assert blocked.status_code == 401
+    assert blocked.json()["message"] == "this account is not active"
 
 
 def test_admin_accounts_cannot_be_suspended_from_the_panel(client):

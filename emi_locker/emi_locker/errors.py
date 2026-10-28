@@ -14,6 +14,18 @@ class PermissionDenied(DomainError):
     http_status = 403
 
 
+class SessionInvalid(PermissionDenied):
+    """The token itself is no good: missing, expired, forged, ended or suspended.
+
+    Kept apart from an ordinary 403 so a client can tell "sign in again" from
+    "you may not do this". Signing a user out on every 403 would throw a
+    retailer out for opening someone else's customer.
+    """
+
+    code = "SESSION_INVALID"
+    http_status = 401
+
+
 class NotFound(DomainError):
     code = "NOT_FOUND"
     http_status = 404
